@@ -1,23 +1,32 @@
 import getpass
 import re
 from html import unescape
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin
 
 from .api import TempusApi, new_session
 from .freja import freja_login
+from .redact import redact_url
+from .transport import ReadOnlyTempusTransport
 
 HTTP_TIMEOUT = 30
 REDIRECT_CODES = (301, 302, 303, 307, 308)
 
 
-def follow_redirects(session, resp, max_hops=20):
+def _client(session_or_transport):
+    if isinstance(session_or_transport, ReadOnlyTempusTransport):
+        return session_or_transport
+    return ReadOnlyTempusTransport(session_or_transport)
+
+
+def follow_redirects(session_or_transport, resp, max_hops=20):
+    client = _client(session_or_transport)
     for _ in range(max_hops):
         if resp.status_code not in REDIRECT_CODES:
             break
         location = resp.headers.get("Location")
         if not location:
             break
-        resp = session.get(urljoin(resp.url, location), allow_redirects=False, timeout=HTTP_TIMEOUT)
+        resp = client.get(urljoin(resp.url, location), allow_redirects=False, timeout=HTTP_TIMEOUT)
     return resp
 
 
@@ -37,47 +46,70 @@ def parse_form_action(html):
     return unescape(m.group(1)) if m else None
 
 
-def handle_saml_chain(session, html, page_url, max_hops=10):
+def handle_saml_chain(session_or_transport, html, page_url, max_hops=10):
+    client = _client(session_or_transport)
     for _ in range(max_hops):
         action = parse_form_action(html)
         fields = parse_hidden_fields(html)
         if not action or not fields:
             break
-        resp = session.post(urljoin(page_url, action), data=fields, allow_redirects=False, timeout=HTTP_TIMEOUT)
-        resp = follow_redirects(session, resp)
+        resp = client.post_login_form(urljoin(page_url, action), data=fields, allow_redirects=False, timeout=HTTP_TIMEOUT)
+        resp = follow_redirects(client, resp)
         html, page_url = resp.text, resp.url
     return html, page_url
 
 
 def find_freja_link(html):
-    m = re.search(r'href=["\'](https://login00[13]\.stockholm\.se/[^"\']*freja[^"\']*)', html, re.I)
-    if not m:
-        raise RuntimeError("Could not find Freja link on Stockholm login page")
-    return unescape(m.group(1))
+    patterns = [
+        r'href=["\']([^"\']*(?:freja|bankid|eleg|e-legitimation)[^"\']*)',
+        r'data-(?:href|url)=["\']([^"\']*(?:freja|bankid|eleg|e-legitimation)[^"\']*)',
+        r'location\.(?:href|assign|replace)\(["\']([^"\']*(?:freja|bankid|eleg|e-legitimation)[^"\']*)',
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, html, re.I)
+        if m:
+            return unescape(m.group(1))
+    if "Inloggningen misslyckades" in html or "BankID/federerad inloggning" in html:
+        raise RuntimeError("Tempus login endpoint returned an upstream login failure before Stockholm/Freja")
+    raise RuntimeError("Could not find Freja/BankID link on Stockholm login page")
+
+
+def stockholm_login_url(schema_id, project="tempus-stockholm", origin="tempusHome"):
+    params = {
+        "schemaId": schema_id,
+        "project": project,
+        "force_client": "false",
+        "origin": origin,
+        "createLoginCookie": "false",
+    }
+    return "https://login.tempusinfo.se/login/saml/login?" + urlencode(params)
 
 
 def login(personnummer=None, session=None, quiet=False):
     session = session or new_session()
+    transport = ReadOnlyTempusTransport(session)
     api = TempusApi(session=session)
     schemas = api.schemas(12)
     stockholm = next((s for s in schemas if s["name"] == "Stockholms stad"), None)
     if not stockholm or not stockholm.get("id"):
         raise RuntimeError("Could not find Stockholms stad schema")
     providers = api.identity_providers(stockholm["id"])
-    if not any(p.get("name") == "Stockholm-inlogg" for p in providers):
+    provider = next((p for p in providers if p.get("name") == "Stockholm-inlogg"), None)
+    if not provider:
         raise RuntimeError("Could not find Stockholm-inlogg provider")
-    login_url = f"https://login.tempusinfo.se/login/saml/login?schemaId={stockholm['id']}&project=tempus-stockholm&origin=tempusHome"
-    resp = session.get(login_url, allow_redirects=False, timeout=HTTP_TIMEOUT)
-    resp = follow_redirects(session, resp)
+
+    login_url = stockholm_login_url(stockholm["id"], project=stockholm.get("project") or "tempus-stockholm")
+    resp = transport.get(login_url, allow_redirects=False, timeout=HTTP_TIMEOUT)
+    resp = follow_redirects(transport, resp)
+    freja_url = urljoin(resp.url, find_freja_link(resp.text))
     if personnummer is None:
         personnummer = getpass.getpass("Personnummer för Freja (visas inte): ")
     if not quiet:
         print("Godkänn i Freja eID+...", flush=True)
-    freja_url = find_freja_link(resp.text)
-    freja_page = follow_redirects(session, session.get(freja_url, allow_redirects=False, timeout=HTTP_TIMEOUT))
+    freja_page = follow_redirects(transport, transport.get(freja_url, allow_redirects=False, timeout=HTTP_TIMEOUT))
     freja_login(session, freja_page.url, personnummer)
-    resp = follow_redirects(session, session.get(freja_page.url, allow_redirects=False, timeout=HTTP_TIMEOUT))
-    handle_saml_chain(session, resp.text, resp.url)
+    resp = follow_redirects(transport, transport.get(freja_page.url, allow_redirects=False, timeout=HTTP_TIMEOUT))
+    handle_saml_chain(transport, resp.text, resp.url)
     return session
 
 

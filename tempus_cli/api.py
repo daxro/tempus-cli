@@ -20,7 +20,7 @@ class TempusApi:
 
     def ensure_permutation(self):
         if not self.permutation:
-            self.permutation = gwt.discover_permutation(self.session)
+            self.permutation = gwt.discover_permutation(self.transport)
         return self.permutation
 
     def schemas(self, area_id=12):
