@@ -9,10 +9,10 @@ from .errors import FrejaError, FrejaRejectedError, FrejaTimeoutError
 HTTP_TIMEOUT = 30
 
 
-def freja_login(session, freja_url, personnummer, poll_interval=2.0, timeout=60.0):
+def freja_login(client, freja_url, personnummer, poll_interval=2.0, timeout=60.0):
     pn = _ensure_12_digits(personnummer)
-    _init_auth(session, freja_url, pn)
-    _poll_until_done(session, freja_url, poll_interval, timeout)
+    _init_auth(client, freja_url, pn)
+    _poll_until_done(client, freja_url, poll_interval, timeout)
 
 
 def _ensure_12_digits(personnummer):
@@ -26,20 +26,27 @@ def _ensure_12_digits(personnummer):
     raise FrejaError("Personnummer must be 10 or 12 digits")
 
 
-def _init_auth(session, freja_url, personnummer):
+def _init_auth(client, freja_url, personnummer):
     parsed = urlparse(freja_url)
     base_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
-    resp = session.post(f"{base_url}?action=init&userInput={personnummer}", timeout=HTTP_TIMEOUT)
+    post = client.post_login_form if hasattr(client, "post_login_form") else client.post
+    if "NECSadcfreja" in parsed.path:
+        # Stockholm's current Freja page initializes the other-device QR flow
+        # without userInput. Supplying userInput returns HTTP 500.
+        init_url = f"{base_url}?action=init"
+    else:
+        init_url = f"{base_url}?action=init&userInput={personnummer}"
+    resp = post(init_url, timeout=HTTP_TIMEOUT)
     if not getattr(resp, "ok", False):
         raise FrejaError(f"Failed to initiate Freja auth: HTTP {resp.status_code}")
 
 
-def _poll_until_done(session, freja_url, poll_interval, timeout):
+def _poll_until_done(client, freja_url, poll_interval, timeout):
     poll_url = freja_url + ("&" if "?" in freja_url else "?") + "action=checkstatus"
     start = time.monotonic()
     while time.monotonic() - start < timeout:
         time.sleep(poll_interval)
-        resp = session.get(poll_url, timeout=HTTP_TIMEOUT)
+        resp = client.get(poll_url, timeout=HTTP_TIMEOUT)
         status = _parse_status(resp.text)
         if status == "APPROVED":
             return

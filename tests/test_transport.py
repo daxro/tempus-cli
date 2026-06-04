@@ -47,3 +47,9 @@ def test_blocks_login_post_with_unexpected_fields():
 def test_allows_saml_login_form_fields():
     t = ReadOnlyTempusTransport(object())
     t._check_login_form_data({"SAMLResponse": "x", "RelayState": "y"})
+
+
+def test_allows_stockholm_freja_path():
+    t = ReadOnlyTempusTransport(object())
+    t._check_url("GET", "https://login001.stockholm.se/NECSadc/freja/b64startpage.jsp")
+    t._check_url("GET", "https://login001.stockholm.se/NECSadcfreja/authenticate/NECSadcfreja")

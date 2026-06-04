@@ -74,13 +74,13 @@ def find_freja_link(html):
     raise RuntimeError("Could not find Freja/BankID link on Stockholm login page")
 
 
-def stockholm_login_url(schema_id, project="tempus-stockholm", origin="tempusHome"):
+def stockholm_login_url(schema_id, provider_option="STOCKHOLM_PROD", origin=None):
     params = {
         "schemaId": schema_id,
-        "project": project,
-        "force_client": "false",
-        "origin": origin,
-        "createLoginCookie": "false",
+        "project": "HOME",
+        "force_client": provider_option,
+        "origin": origin or f"https://home.tempusinfo.se/tempusHome/#loc=12&provider={schema_id}",
+        "createLoginCookie": "true",
     }
     return "https://login.tempusinfo.se/login/saml/login?" + urlencode(params)
 
@@ -98,16 +98,17 @@ def login(personnummer=None, session=None, quiet=False):
     if not provider:
         raise RuntimeError("Could not find Stockholm-inlogg provider")
 
-    login_url = stockholm_login_url(stockholm["id"], project=stockholm.get("project") or "tempus-stockholm")
+    login_url = stockholm_login_url(stockholm["id"], provider_option=provider.get("option") or "STOCKHOLM_PROD")
     resp = transport.get(login_url, allow_redirects=False, timeout=HTTP_TIMEOUT)
     resp = follow_redirects(transport, resp)
-    freja_url = urljoin(resp.url, find_freja_link(resp.text))
+    html, page_url = handle_saml_chain(transport, resp.text, resp.url)
+    freja_url = urljoin(page_url, find_freja_link(html))
     if personnummer is None:
         personnummer = getpass.getpass("Personnummer för Freja (visas inte): ")
     if not quiet:
         print("Godkänn i Freja eID+...", flush=True)
     freja_page = follow_redirects(transport, transport.get(freja_url, allow_redirects=False, timeout=HTTP_TIMEOUT))
-    freja_login(session, freja_page.url, personnummer)
+    freja_login(transport, freja_page.url, personnummer)
     resp = follow_redirects(transport, transport.get(freja_page.url, allow_redirects=False, timeout=HTTP_TIMEOUT))
     handle_saml_chain(transport, resp.text, resp.url)
     return session

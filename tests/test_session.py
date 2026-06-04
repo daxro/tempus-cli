@@ -18,5 +18,7 @@ def test_stockholm_login_url_keeps_parameters_out_of_logs_only_by_caller():
     url = stockholm_login_url(399)
     assert url.startswith("https://login.tempusinfo.se/login/saml/login?")
     assert "schemaId=399" in url
-    assert "force_client=false" in url
-    assert "createLoginCookie=false" in url
+    assert "project=HOME" in url
+    assert "force_client=STOCKHOLM_PROD" in url
+    assert "provider%3D399" in url
+    assert "createLoginCookie=true" in url

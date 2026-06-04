@@ -18,6 +18,8 @@ ALLOWED_LOGIN_PATH_PREFIXES = (
 ALLOWED_STOCKHOLM_PATH_PREFIXES = (
     "/affwebservices/",
     "/siteminderagent/",
+    "/NECSadc/",
+    "/NECSadcfreja/",
 )
 READ_ONLY_RPC_METHODS = {
     "getSchemas",
