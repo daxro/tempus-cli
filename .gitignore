@@ -8,3 +8,4 @@ dist/
 session.json
 *session*.json
 tempus-discovery*.json
+docs/plans/
