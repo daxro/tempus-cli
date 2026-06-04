@@ -5,7 +5,9 @@ from urllib.parse import urlencode, urljoin
 
 from .api import TempusApi, new_session
 from .freja import freja_login
-from .redact import redact_url
+from .paths import default_session_path
+from .redact import redact_text
+from .session_store import load_session_opt_in
 from .transport import ReadOnlyTempusTransport
 
 HTTP_TIMEOUT = 30
@@ -111,8 +113,47 @@ def login(personnummer=None, session=None, quiet=False):
     freja_login(transport, freja_page.url, personnummer)
     resp = follow_redirects(transport, transport.get(freja_page.url, allow_redirects=False, timeout=HTTP_TIMEOUT))
     handle_saml_chain(transport, resp.text, resp.url)
+    verify_login_return(session)
     return session
 
 
-def status_text():
-    return "session: in-memory only\nauthenticated: unknown"
+def verify_login_return(session):
+    """Verify that the login flow lands back on Tempus Home.
+
+    This is not a proof that authenticated child/pickup data can be read; those
+    RPC methods are still unknown. It only prevents known failed login returns
+    from being reported as a clean login flow.
+    """
+    transport = ReadOnlyTempusTransport(session)
+    resp = follow_redirects(
+        transport,
+        transport.get("https://home.tempusinfo.se/tempusHome/", allow_redirects=False, timeout=HTTP_TIMEOUT),
+    )
+    resp.raise_for_status()
+    if not resp.url.startswith("https://home.tempusinfo.se/tempusHome/"):
+        raise RuntimeError(f"Tempus login return verification failed: unexpected final URL {redact_text(resp.url)}")
+    if "Inloggningen misslyckades" in resp.text or "BankID/federerad inloggning" in resp.text:
+        raise RuntimeError("Tempus login return verification failed: login failure page returned")
+    return True
+
+
+def verify_authenticated(session):
+    """Fail closed until an authenticated read-only Tempus RPC is allowlisted."""
+    raise RuntimeError("authenticated read verification is not available yet")
+
+
+def status_text(session_path=None):
+    session_path = session_path or default_session_path()
+    if not session_path.exists():
+        return "session: none\nauthenticated: no"
+
+    session = new_session()
+    if not load_session_opt_in(session, session_path):
+        return "session: unreadable\nauthenticated: no"
+
+    try:
+        verify_authenticated(session)
+    except Exception as exc:
+        reason = redact_text(str(exc))
+        return f"session: persisted\nauthenticated: no\nreason: {reason}"
+    return "session: persisted\nauthenticated: yes"

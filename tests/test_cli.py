@@ -8,7 +8,9 @@ def test_help_runs(capsys):
 
 def test_status_runs(capsys):
     assert main(["status"]) == 0
-    assert "in-memory only" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "session:" in out
+    assert "authenticated:" in out
 
 
 def test_pickup_requires_iso_date(capsys):
