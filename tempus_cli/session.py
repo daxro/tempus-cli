@@ -6,7 +6,7 @@ from urllib.parse import urlencode, urljoin
 
 from .api import TempusApi, new_session
 from .freja import freja_login
-from .paths import default_session_path
+from .paths import default_config_path, default_session_path
 from .redact import redact_text
 from .session_store import load_session_opt_in
 from .transport import ReadOnlyTempusTransport
@@ -88,8 +88,20 @@ def stockholm_login_url(schema_id, provider_option="STOCKHOLM_PROD", origin=None
     return "https://login.tempusinfo.se/login/saml/login?" + urlencode(params)
 
 
+def _read_config_personnummer(path=None):
+    path = path or default_config_path()
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if line.startswith("TEMPUS_PERSONNUMMER="):
+            return line.split("=", 1)[1].strip()
+    return None
+
+
 def _resolve_personnummer(personnummer=None):
-    return personnummer or os.environ.get("TEMPUS_PERSONNUMMER")
+    return personnummer or os.environ.get("TEMPUS_PERSONNUMMER") or _read_config_personnummer()
 
 
 def login(personnummer=None, session=None, quiet=False, freja_timeout=180.0):

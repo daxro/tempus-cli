@@ -7,6 +7,9 @@ APP_NAME = "tempus-cli"
 def config_dir() -> Path:
     return Path(user_config_dir(APP_NAME))
 
+def default_config_path() -> Path:
+    return config_dir() / "config.env"
+
 def default_session_path() -> Path:
     return config_dir() / "session.json"
 

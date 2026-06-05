@@ -87,6 +87,17 @@ def test_login_uses_tempus_personnummer_env(monkeypatch):
     assert calls["personnummer"] == "198001011234"
 
 
+def test_login_uses_saved_tempus_personnummer_config(monkeypatch, tmp_path):
+    from tempus_cli import session as session_module
+
+    config_file = tmp_path / "config.env"
+    config_file.write_text("TEMPUS_PERSONNUMMER=198001011234\n")
+    monkeypatch.delenv("TEMPUS_PERSONNUMMER", raising=False)
+    monkeypatch.setattr(session_module, "default_config_path", lambda: config_file)
+
+    assert session_module._resolve_personnummer() == "198001011234"
+
+
 class DummyResponse:
     def __init__(self, url="https://home.tempusinfo.se/tempusHome/", text="<html>Tempus Home</html>", status_code=200, headers=None):
         self.url = url

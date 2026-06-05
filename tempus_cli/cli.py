@@ -1,5 +1,9 @@
 import argparse
 import datetime as dt
+import getpass
+import json
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -8,7 +12,10 @@ from . import __version__
 from .api import TempusApi
 from .discover import record_request, write_discovery
 from .errors import TempusError
-from .session import login, status_text
+from .session import login, status_text, verify_authenticated
+from .session_store import load_session_opt_in, save_session_opt_in
+from .paths import default_config_path, default_session_path
+from .redact import redact_text
 from .models import assert_pickup_name, assert_viggo
 
 AREA_IDS = {"stockholm": 12}
@@ -19,7 +26,25 @@ def build_parser():
     parser.add_argument("--version", action="version", version=f"tempus {__version__}")
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("status", help="Check local Tempus session status")
+    status = sub.add_parser("status", help="Check local Tempus session status")
+    status.add_argument("--json", dest="json_output", action="store_true", help="Output status as JSON")
+
+    setup = sub.add_parser(
+        "setup",
+        help="Configure Tempus Freja login and cache a session",
+        description="Configure Tempus with a 12-digit personal number and save a verified session.",
+        epilog="""examples:
+  TEMPUS_PERSONNUMMER=200001011234 tempus setup --no-input
+  tempus setup
+
+safety:
+  uses Freja eID+ through Stockholm; never QR
+  stores config and session outside the repo with 0600 permissions""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    setup.add_argument("-q", "--quiet", action="store_true", help="Suppress progress messages on stderr")
+    setup.add_argument("--no-input", action="store_true", help="Read TEMPUS_PERSONNUMMER/PERSONNUMMER from env instead of prompting")
+    setup.add_argument("--freja-timeout", type=float, default=180.0, help=argparse.SUPPRESS)
 
     schemas = sub.add_parser("schemas", help="List public Tempus schemas/verksamheter")
     schemas.add_argument("--area", default="Stockholm")
@@ -35,7 +60,11 @@ def build_parser():
     children = sub.add_parser("children", help="List children (not enabled until read RPC is discovered)")
     children.add_argument("--personnummer", help=argparse.SUPPRESS)
 
-    pickup = sub.add_parser("pickup", help="Read pickup status for one date")
+    pickup = sub.add_parser(
+        "pickup",
+        help="Read/preview pickup status for one date; writes disabled",
+        description="Read/preview pickup status for one date. Tempus writes disabled until a verified write RPC exists.",
+    )
     pickup.add_argument("--child", required=True)
     pickup.add_argument("--date", required=True)
     pickup.add_argument("--personnummer", help=argparse.SUPPRESS)
@@ -76,12 +105,115 @@ def print_pickup_preview(status, pickup_name, confirm_text):
     print(f'För att skriva: lägg till --apply --confirm "{confirm_text}"')
 
 
+def _mask_personnummer(personnummer):
+    if not personnummer or len(personnummer) < 9:
+        return personnummer
+    return personnummer[2:6] + "****" + personnummer[8:]
+
+
+def _read_config_personnummer(path=None):
+    path = path or default_config_path()
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if line.startswith("TEMPUS_PERSONNUMMER="):
+            return line.split("=", 1)[1].strip()
+    return None
+
+
+def _write_config_personnummer(personnummer, path=None):
+    path = path or default_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(f"TEMPUS_PERSONNUMMER={personnummer}\n")
+    os.chmod(path, 0o600)
+
+
+def _validate_personnummer(personnummer):
+    if not re.fullmatch(r"\d{12}", personnummer or ""):
+        raise ValueError("Personnummer måste vara 12 siffror (YYYYMMDDXXXX)")
+    return personnummer
+
+
+def _env_personnummer():
+    return os.environ.get("TEMPUS_PERSONNUMMER") or os.environ.get("PERSONNUMMER")
+
+
+def _status_dict(config_path=None, session_path=None):
+    config_path = config_path or default_config_path()
+    session_path = session_path or default_session_path()
+    personnummer = _read_config_personnummer(config_path)
+    status = {
+        "configured": bool(personnummer),
+        "personnummer": _mask_personnummer(personnummer) if personnummer else None,
+        "session": None,
+        "authenticated": False,
+        "reason": None,
+        "config_path": str(config_path),
+        "session_path": str(session_path),
+    }
+    if not session_path.exists():
+        status["session"] = "none"
+        return status
+    session = TempusApi().session
+    if not load_session_opt_in(session, session_path):
+        status["session"] = "unreadable"
+        return status
+    status["session"] = "persisted"
+    try:
+        verify_authenticated(session)
+        status["authenticated"] = True
+    except Exception as exc:
+        status["reason"] = redact_text(str(exc))
+    return status
+
+
+def _print_status(status):
+    print(f"configured: {'yes' if status['configured'] else 'no'}")
+    if status["personnummer"]:
+        print(f"personnummer: {status['personnummer']}")
+    print(f"config: {status['config_path']}")
+    print(f"session: {status['session']}")
+    print(f"session_path: {status['session_path']}")
+    print(f"authenticated: {'yes' if status['authenticated'] else 'no'}")
+    if status["reason"]:
+        print(f"reason: {status['reason']}")
+
+
+def _setup(args):
+    personnummer = _env_personnummer() if args.no_input else getpass.getpass("Personnummer (12 siffror, visas inte): ").strip()
+    if not personnummer and args.no_input:
+        raise ValueError("TEMPUS_PERSONNUMMER env var krävs i non-interactive mode")
+    if not personnummer:
+        raise ValueError("Personnummer krävs")
+    personnummer = _validate_personnummer(personnummer)
+    session = login(personnummer=personnummer, quiet=args.quiet, freja_timeout=args.freja_timeout)
+    _write_config_personnummer(personnummer)
+    save_session_opt_in(session, default_session_path())
+    if not args.quiet:
+        print("Authenticated.", file=sys.stderr)
+    print(status_text())
+
+
 def main(argv=None):
     parser = build_parser()
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return int(exc.code or 0)
     try:
         if args.command == "status":
-            print(status_text())
+            status = _status_dict()
+            if args.json_output:
+                print(json.dumps(status, ensure_ascii=False, indent=2))
+            else:
+                _print_status(status)
+            return 0
+        if args.command == "setup":
+            _setup(args)
             return 0
         if args.command == "schemas":
             area_id = args.area_id or AREA_IDS.get(args.area.lower())
