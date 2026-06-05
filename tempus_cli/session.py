@@ -1,4 +1,5 @@
 import getpass
+import os
 import re
 from html import unescape
 from urllib.parse import urlencode, urljoin
@@ -87,7 +88,11 @@ def stockholm_login_url(schema_id, provider_option="STOCKHOLM_PROD", origin=None
     return "https://login.tempusinfo.se/login/saml/login?" + urlencode(params)
 
 
-def login(personnummer=None, session=None, quiet=False):
+def _resolve_personnummer(personnummer=None):
+    return personnummer or os.environ.get("TEMPUS_PERSONNUMMER")
+
+
+def login(personnummer=None, session=None, quiet=False, freja_timeout=180.0):
     session = session or new_session()
     transport = ReadOnlyTempusTransport(session)
     api = TempusApi(session=session)
@@ -105,12 +110,17 @@ def login(personnummer=None, session=None, quiet=False):
     resp = follow_redirects(transport, resp)
     html, page_url = handle_saml_chain(transport, resp.text, resp.url)
     freja_url = urljoin(page_url, find_freja_link(html))
+    personnummer = _resolve_personnummer(personnummer)
     if personnummer is None:
         personnummer = getpass.getpass("Personnummer för Freja (visas inte): ")
-    if not quiet:
-        print("Godkänn i Freja eID+...", flush=True)
     freja_page = follow_redirects(transport, transport.get(freja_url, allow_redirects=False, timeout=HTTP_TIMEOUT))
-    freja_login(transport, freja_page.url, personnummer)
+    freja_login(
+        transport,
+        freja_page.url,
+        personnummer,
+        timeout=freja_timeout,
+        on_started=(lambda: print("Godkänn i Freja eID+...", flush=True)) if not quiet else None,
+    )
     resp = follow_redirects(transport, transport.get(freja_page.url, allow_redirects=False, timeout=HTTP_TIMEOUT))
     handle_saml_chain(transport, resp.text, resp.url)
     verify_login_return(session)

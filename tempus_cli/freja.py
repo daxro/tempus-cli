@@ -9,9 +9,11 @@ from .errors import FrejaError, FrejaRejectedError, FrejaTimeoutError
 HTTP_TIMEOUT = 30
 
 
-def freja_login(client, freja_url, personnummer, poll_interval=2.0, timeout=60.0):
+def freja_login(client, freja_url, personnummer, poll_interval=2.0, timeout=60.0, on_started=None):
     pn = _ensure_12_digits(personnummer)
     _init_auth(client, freja_url, pn)
+    if on_started:
+        on_started()
     _poll_until_done(client, freja_url, poll_interval, timeout)
 
 
@@ -30,27 +32,23 @@ def _init_auth(client, freja_url, personnummer):
     parsed = urlparse(freja_url)
     base_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
     post = client.post_login_form if hasattr(client, "post_login_form") else client.post
-    if "NECSadcfreja" in parsed.path:
-        # Stockholm's current Freja page initializes the other-device QR flow
-        # without userInput. Supplying userInput returns HTTP 500.
-        init_url = f"{base_url}?action=init"
-    else:
-        init_url = f"{base_url}?action=init&userInput={personnummer}"
-    resp = post(init_url, timeout=HTTP_TIMEOUT)
+    init_url = f"{base_url}?action=init&userInput={personnummer}"
+    resp = post(init_url, headers=_ajax_headers(base_url), timeout=HTTP_TIMEOUT)
     if not getattr(resp, "ok", False):
         raise FrejaError(f"Failed to initiate Freja auth: HTTP {resp.status_code}")
 
 
 def _poll_until_done(client, freja_url, poll_interval, timeout):
     poll_url = freja_url + ("&" if "?" in freja_url else "?") + "action=checkstatus"
+    headers = _ajax_headers(freja_url)
     start = time.monotonic()
     while time.monotonic() - start < timeout:
         time.sleep(poll_interval)
-        resp = client.get(poll_url, timeout=HTTP_TIMEOUT)
+        resp = client.get(poll_url, headers=headers, timeout=HTTP_TIMEOUT)
         status = _parse_status(resp.text)
         if status == "APPROVED":
             return
-        if status == "CANCELED":
+        if status in ("CANCELED", "REJECTED"):
             raise FrejaRejectedError("Authentication was rejected in Freja")
         if status in ("EXPIRED", "TIMEOUT"):
             raise FrejaTimeoutError(f"Authentication expired: {status}")
@@ -66,3 +64,11 @@ def _parse_status(text):
     except (json.JSONDecodeError, ValueError):
         return text
     return data.get("status", text) if isinstance(data, dict) else text
+
+
+def _ajax_headers(referer):
+    return {
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "*/*",
+        "Referer": referer,
+    }

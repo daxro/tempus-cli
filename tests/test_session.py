@@ -24,6 +24,69 @@ def test_stockholm_login_url_keeps_parameters_out_of_logs_only_by_caller():
     assert "createLoginCookie=true" in url
 
 
+def test_login_passes_custom_freja_timeout(monkeypatch):
+    from tempus_cli import session as session_module
+
+    calls = {}
+
+    class FakeApi:
+        def __init__(self, session=None):
+            pass
+        def schemas(self, area_id):
+            return [{"name": "Stockholms stad", "id": 399}]
+        def identity_providers(self, schema_id):
+            return [{"name": "Stockholm-inlogg", "option": "STOCKHOLM_PROD"}]
+
+    class FakeTransport:
+        def __init__(self, session):
+            pass
+        def get(self, *args, **kwargs):
+            return DummyResponse()
+
+    monkeypatch.setattr(session_module, "TempusApi", FakeApi)
+    monkeypatch.setattr(session_module, "ReadOnlyTempusTransport", FakeTransport)
+    monkeypatch.setattr(session_module, "follow_redirects", lambda transport, resp: resp)
+    monkeypatch.setattr(session_module, "handle_saml_chain", lambda transport, html, url: ('<a href="/freja/start">Freja</a>', 'https://login001.stockholm.se/page'))
+    monkeypatch.setattr(session_module, "freja_login", lambda transport, url, personnummer, on_started=None, timeout=None: calls.update(timeout=timeout))
+    monkeypatch.setattr(session_module, "verify_login_return", lambda session: True)
+
+    session_module.login(personnummer="198001011234", session=object(), quiet=True, freja_timeout=180)
+
+    assert calls["timeout"] == 180
+
+
+def test_login_uses_tempus_personnummer_env(monkeypatch):
+    from tempus_cli import session as session_module
+
+    calls = {}
+
+    class FakeApi:
+        def __init__(self, session=None):
+            pass
+        def schemas(self, area_id):
+            return [{"name": "Stockholms stad", "id": 399}]
+        def identity_providers(self, schema_id):
+            return [{"name": "Stockholm-inlogg", "option": "STOCKHOLM_PROD"}]
+
+    class FakeTransport:
+        def __init__(self, session):
+            pass
+        def get(self, *args, **kwargs):
+            return DummyResponse()
+
+    monkeypatch.setenv("TEMPUS_PERSONNUMMER", "198001011234")
+    monkeypatch.setattr(session_module, "TempusApi", FakeApi)
+    monkeypatch.setattr(session_module, "ReadOnlyTempusTransport", FakeTransport)
+    monkeypatch.setattr(session_module, "follow_redirects", lambda transport, resp: resp)
+    monkeypatch.setattr(session_module, "handle_saml_chain", lambda transport, html, url: ('<a href="/freja/start">Freja</a>', 'https://login001.stockholm.se/page'))
+    monkeypatch.setattr(session_module, "freja_login", lambda transport, url, personnummer, on_started=None, timeout=None: calls.update(personnummer=personnummer))
+    monkeypatch.setattr(session_module, "verify_login_return", lambda session: True)
+
+    session_module.login(session=object(), quiet=True)
+
+    assert calls["personnummer"] == "198001011234"
+
+
 class DummyResponse:
     def __init__(self, url="https://home.tempusinfo.se/tempusHome/", text="<html>Tempus Home</html>", status_code=200, headers=None):
         self.url = url

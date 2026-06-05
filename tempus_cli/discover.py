@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -19,6 +20,7 @@ def _inside(path: Path, parent: Path) -> bool:
 def record_request(method, url, body=None, response=None):
     parts = urlsplit(url)
     return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "method": method,
         "path": parts.path,
         "rpc_method": rpc_method_from_payload(body or ""),
