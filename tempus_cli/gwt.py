@@ -258,21 +258,24 @@ def _parse_encoded_pickups(data):
         name = _string_from_table(strings, record[1])
         pickup_id = record[2] if isinstance(record[2], int) and record[2] > len(strings) else None
         children = []
+        raw_children = []
         for child_index in range(3, len(record) - 2):
             child_name = _string_from_table(strings, record[child_index])
+            child_id = record[child_index + 1]
             if (
                 child_name
                 and not child_name.startswith(("java.", "se."))
-                and isinstance(record[child_index + 1], int)
+                and isinstance(child_id, int)
                 and record[child_index + 2] == integer_class
             ):
                 children.append(child_name)
+                raw_children.append({"name": child_name, "id": str(child_id)})
         pickup = {
             "id": str(pickup_id) if pickup_id is not None else None,
             "name": name,
             "phone": phone or None,
             "children": children,
-            "_raw": {"encoded": record},
+            "_raw": {"encoded": record, "children": raw_children},
         }
         if pickup["id"] or pickup["name"] or pickup["phone"]:
             pickups.append(pickup)

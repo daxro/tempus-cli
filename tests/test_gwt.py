@@ -176,14 +176,20 @@ def test_parse_pickups_from_encoded_tree_set_fixture():
             "name": "Example Guardian A",
             "phone": None,
             "children": ["Example Child A"],
-            "_raw": {"encoded": [10, 6, 123, 5, 456, 4, 789, 4, 1, 3, 2]},
+            "_raw": {
+                "encoded": [10, 6, 123, 5, 456, 4, 789, 4, 1, 3, 2],
+                "children": [{"name": "Example Child A", "id": "456"}],
+            },
         },
         {
             "id": "124",
             "name": "Example Guardian B",
             "phone": "0700000000",
             "children": ["Example Child B"],
-            "_raw": {"encoded": [9, 8, 124, 7, 457, 4, 789, 4, 1, 3, 2]},
+            "_raw": {
+                "encoded": [9, 8, 124, 7, 457, 4, 789, 4, 1, 3, 2],
+                "children": [{"name": "Example Child B", "id": "457"}],
+            },
         },
     ]
 
