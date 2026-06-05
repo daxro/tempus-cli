@@ -5,6 +5,7 @@ from .transport import ReadOnlyTempusTransport
 
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X) tempus-cli/0.1"
 PICKUP_WRITES_DISABLED = "pickup writes require sanitized Tempus write fixtures before --apply can be enabled"
+DATE_ASSIGNMENT_READ_UNAVAILABLE = "date assignment reads require sanitized Tempus fixtures before assignment preview can be enabled"
 
 
 def new_session():
@@ -52,4 +53,10 @@ class TempusApi:
         raise RuntimeError(PICKUP_WRITES_DISABLED)
 
     def remove_pickup(self, pickup_id):
+        raise RuntimeError(PICKUP_WRITES_DISABLED)
+
+    def pickup_assignment(self, date, child_name):
+        raise RuntimeError(DATE_ASSIGNMENT_READ_UNAVAILABLE)
+
+    def assign_pickup(self, date, child_id, pickup_id):
         raise RuntimeError(PICKUP_WRITES_DISABLED)

@@ -1,4 +1,5 @@
 import argparse
+from datetime import date
 import json
 import os
 import re
@@ -98,6 +99,8 @@ safety:
   tempus pickup
   tempus pickup --child CHILD_NAME --json
   tempus pickup --child CHILD_NAME --name "Example Guardian" --phone "0700000000" --json
+  tempus pickup --date YYYY-MM-DD --child CHILD_NAME --id PICKUP_ID --json
+  tempus pickup --date YYYY-MM-DD --child CHILD_NAME --name "Example Guardian" --json
 
 safety:
   default mode is read-only preview
@@ -107,8 +110,9 @@ safety:
     )
     pickup.add_argument("--json", dest="json_output", action="store_true", help="Output stable JSON")
     pickup.add_argument("--no-input", action="store_true", help="Disable prompts; require saved session or environment")
+    pickup.add_argument("--date", help="Assign pickup for this local Tempus date (YYYY-MM-DD)")
     pickup.add_argument("--child", help="Filter or assign to this child name")
-    pickup.add_argument("--id", dest="pickup_id", help="Pickup contact ID for update or remove")
+    pickup.add_argument("--id", dest="pickup_id", help="Pickup contact ID for update, remove, or date assignment")
     pickup.add_argument("--name", help="Pickup contact name")
     pickup.add_argument("--phone", help="Pickup contact phone number")
     pickup.add_argument("--remove", action="store_true", help="Preview removing an existing pickup contact")
@@ -216,7 +220,32 @@ def _validate_non_empty(value, flag):
     return value
 
 
+def _validate_pickup_date(value):
+    value = _validate_non_empty(value, "--date")
+    try:
+        return date.fromisoformat(value).isoformat()
+    except ValueError as exc:
+        raise ValueError("--date must be a valid YYYY-MM-DD date") from exc
+
+
 def _pickup_operation(args):
+    if args.date is not None:
+        _validate_pickup_date(args.date)
+        _validate_non_empty(args.child, "--child")
+        if args.remove:
+            raise ValueError("--date cannot be combined with --remove")
+        if args.phone is not None:
+            raise ValueError("--date cannot be combined with --phone until contact-create fixtures prove required fields")
+        if args.pickup_id and args.name is not None:
+            raise ValueError("--date requires either --id or --name, not both")
+        if args.pickup_id:
+            _validate_pickup_id(args.pickup_id)
+        elif args.name is not None:
+            _validate_non_empty(args.name, "--name")
+        else:
+            raise ValueError("--date requires --id or --name")
+        return "assign"
+
     has_change = args.name is not None or args.phone is not None
     if args.remove:
         if not args.pickup_id:
@@ -266,7 +295,52 @@ def _find_pickup(pickups, pickup_id):
     return matches[0]
 
 
+def _find_pickup_by_name(pickups, name):
+    name = _validate_non_empty(name, "--name")
+    matches = [pickup for pickup in pickups if str(pickup.get("name") or "") == name]
+    if not matches:
+        raise ValueError(
+            f"pickup contact named '{name}' not found; contact creation requires sanitized Tempus write fixtures"
+        )
+    if len(matches) > 1:
+        raise ValueError(f"pickup contact name '{name}' matched multiple records; use --id")
+    return matches[0]
+
+
+def _assignment_preview(args, pickups):
+    pickup = _find_pickup(pickups, args.pickup_id) if args.pickup_id else _find_pickup_by_name(pickups, args.name)
+    contact = _public_pickup(pickup)
+    child_name = _validate_non_empty(args.child, "--child")
+    pickup_date = _validate_pickup_date(args.date)
+    return {
+        "mode": "preview",
+        "operation": "assign",
+        "date": pickup_date,
+        "child": {"name": child_name, "id": None},
+        "contact": {
+            "id": contact.get("id"),
+            "name": contact.get("name"),
+            "phone": contact.get("phone"),
+        },
+        "existing_assignment": None,
+        "proposed_assignment": {
+            "date": pickup_date,
+            "child_id": None,
+            "pickup_id": contact.get("id"),
+        },
+        "contact_write": None,
+        "assignment_write": {"required": True},
+        "write_performed": False,
+        "would_write_if_applied": False,
+        "blocked": True,
+        "block_reason": "date_assignment_read_unavailable",
+    }
+
+
 def _pickup_preview(operation, args, pickups):
+    if operation == "assign":
+        return _assignment_preview(args, pickups)
+
     if operation == "create":
         proposed = {
             "id": None,
@@ -345,6 +419,8 @@ def _pickup(args):
             print(f"existing: {preview['existing_pickup']}")
         if preview.get("proposed_pickup"):
             print(f"proposed: {preview['proposed_pickup']}")
+        if preview.get("proposed_assignment"):
+            print(f"proposed: {preview['proposed_assignment']}")
         if preview.get("blocked"):
             print(f"blocked: {preview.get('block_reason')}")
     return 0

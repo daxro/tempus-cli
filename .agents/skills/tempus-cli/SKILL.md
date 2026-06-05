@@ -23,6 +23,7 @@ tempus status --json
 tempus schemas --area Stockholm --json
 tempus providers --schema-id 399 --json
 tempus pickup --json
+tempus pickup --date YYYY-MM-DD --child CHILD_NAME --id PICKUP_ID --json
 TEMPUS_PERSONNUMMER=YYYYMMDDNNNN tempus setup --no-input
 TEMPUS_PERSONNUMMER=YYYYMMDDNNNN tempus login --no-input
 ```
