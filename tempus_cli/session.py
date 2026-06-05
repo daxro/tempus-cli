@@ -169,8 +169,9 @@ def verify_login_return(session):
 
 
 def verify_authenticated(session):
-    """Fail closed until an authenticated read-only Tempus RPC is allowlisted."""
-    raise RuntimeError("authenticated read verification is not available yet")
+    """Verify authentication with an allowlisted read-only Tempus RPC."""
+    TempusApi(session=session).pickups()
+    return True
 
 
 def status_text(session_path=None):

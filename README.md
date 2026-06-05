@@ -1,6 +1,6 @@
 # tempus-cli
 
-An unofficial, read-only CLI for Tempus Home using Freja eID+ through Stockholms stad.
+An unofficial CLI for Tempus Home using Freja eID+ through Stockholms stad.
 
 This project is not affiliated with Tempus or Stockholms stad.
 
@@ -38,17 +38,21 @@ tempus status
 tempus status --json
 tempus schemas --area Stockholm --json
 tempus providers --schema-id 399 --json
+tempus pickup --json
+tempus pickup --child CHILD_NAME --name "Example Guardian" --phone "0700000000" --json
 tempus login
 ```
 
-Human-readable output is the default. `status`, `schemas`, and `providers` support stable JSON for scripts and agents.
+Human-readable output is the default. `status`, `schemas`, `providers`, and `pickup` support stable JSON for scripts and agents.
 
-`login` verifies the Freja login flow without saving a session. `status` fails closed when authenticated read verification is unavailable.
+`login` verifies the Freja login flow without saving a session. `status` verifies a persisted session with an authenticated pickup read without printing pickup data.
+
+`pickup` lists pickup contacts and previews guarded pickup contact changes. Preview is the default. Applying create, update, or remove operations remains disabled until sanitized Tempus write fixtures verify the exact GWT payloads.
 
 ## Safety
 
-- Remote Tempus operations are read-only.
-- Unknown and write-like Tempus RPC methods are blocked centrally.
+- Remote Tempus operations are read-only except explicitly confirmed pickup writes after fixture-backed enablement.
+- Unknown and write-like Tempus RPC methods are blocked centrally; pickup writes use a separate allowlist.
 - Session files, cookies, SAML values, query values, personal numbers, and token-like values must never be committed or shared.
 - Network access is restricted to HTTPS and an explicit host/path allowlist.
 

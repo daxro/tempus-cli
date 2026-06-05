@@ -26,8 +26,14 @@ ALLOWED_STOCKHOLM_PATH_PREFIXES = (
 READ_ONLY_RPC_METHODS = {
     "getSchemas",
     "getGrandIdIdentityProviders",
+    "getPickups",
     "isCreateLoginCookieEnabled",
     "isUsernamePasswordEnabled",
+}
+PICKUP_WRITE_RPC_METHODS = {
+    "createPickup",
+    "updatePickup",
+    "removePickup",
 }
 WRITE_WORDS = (
     "save",
@@ -95,6 +101,15 @@ class ReadOnlyTempusTransport:
         except requests.exceptions.RequestException as exc:
             raise wrap_network_error(exc, f"Tempus RPC {method}") from exc
 
+    def post_pickup_write_rpc(self, url, payload, headers=None, **kwargs):
+        self._check_url("POST", url)
+        method = rpc_method_from_payload(payload)
+        self._check_pickup_write_rpc_method(method)
+        try:
+            return self.session.post(url, data=payload, headers=headers, **kwargs)
+        except requests.exceptions.RequestException as exc:
+            raise wrap_network_error(exc, f"Tempus pickup RPC {method}") from exc
+
     def post_login_form(self, url, data=None, **kwargs):
         self._check_url("POST", url, allow_login=True)
         self._check_login_form_data(data)
@@ -143,3 +158,9 @@ class ReadOnlyTempusTransport:
             raise SafetyError(f"Blocked write-like Tempus RPC method: {method}")
         if method not in READ_ONLY_RPC_METHODS:
             raise SafetyError(f"Blocked unknown Tempus RPC method: {method}")
+
+    def _check_pickup_write_rpc_method(self, method):
+        if not method:
+            raise SafetyError("Could not identify GWT RPC method")
+        if method not in PICKUP_WRITE_RPC_METHODS:
+            raise SafetyError(f"Blocked non-pickup Tempus write RPC method: {method}")

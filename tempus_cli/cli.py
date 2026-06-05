@@ -1,12 +1,13 @@
 import argparse
 import json
 import os
+import re
 import sys
 
 import requests
 
 from . import __version__
-from .api import TempusApi
+from .api import PICKUP_WRITES_DISABLED, TempusApi
 from .errors import FrejaError, TempusError
 from .paths import default_config_path, default_session_path
 from .redact import redact_text
@@ -19,10 +20,11 @@ AREA_IDS = {"stockholm": 12}
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="tempus",
-        description="Unofficial read-only CLI for Tempus Home.",
+        description="Unofficial CLI for Tempus Home.",
         epilog="""examples:
   tempus status --json
   tempus schemas --area Stockholm --json
+  tempus pickup --json
   TEMPUS_PERSONNUMMER=YYYYMMDDNNNN tempus setup --no-input
 
 environment:
@@ -88,6 +90,31 @@ safety:
     login_parser.add_argument("--no-input", action="store_true", help="Disable prompts; require environment or saved config")
     login_parser.add_argument("--freja-timeout", type=float, default=180.0, help="Seconds to wait for Freja approval (default: 180)")
 
+    pickup = sub.add_parser(
+        "pickup",
+        help="List or preview guarded pickup contact changes",
+        description="List pickup contacts or preview guarded pickup contact changes.",
+        epilog="""examples:
+  tempus pickup
+  tempus pickup --child CHILD_NAME --json
+  tempus pickup --child CHILD_NAME --name "Example Guardian" --phone "0700000000" --json
+
+safety:
+  default mode is read-only preview
+  writes require --apply --confirm after fixture-backed enablement
+  remove also requires --name EXACT_CURRENT_NAME""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pickup.add_argument("--json", dest="json_output", action="store_true", help="Output stable JSON")
+    pickup.add_argument("--no-input", action="store_true", help="Disable prompts; require saved session or environment")
+    pickup.add_argument("--child", help="Filter or assign to this child name")
+    pickup.add_argument("--id", dest="pickup_id", help="Pickup contact ID for update or remove")
+    pickup.add_argument("--name", help="Pickup contact name")
+    pickup.add_argument("--phone", help="Pickup contact phone number")
+    pickup.add_argument("--remove", action="store_true", help="Preview removing an existing pickup contact")
+    pickup.add_argument("--apply", action="store_true", help="Apply the previewed pickup change after safety checks")
+    pickup.add_argument("--confirm", action="store_true", help="Required together with --apply")
+
     return parser
 
 
@@ -138,6 +165,189 @@ def _print_status(status):
     print(f"authenticated: {'yes' if status['authenticated'] else 'no'}")
     if status["reason"]:
         print(f"reason: {status['reason']}")
+
+
+def _public_pickup(pickup):
+    return {
+        "id": pickup.get("id"),
+        "name": pickup.get("name"),
+        "phone": pickup.get("phone"),
+        "children": list(pickup.get("children") or []),
+    }
+
+
+def _child_matches(pickup, child):
+    if child is None:
+        return True
+    child_lower = child.lower()
+    return any(child_lower in str(name).lower() for name in pickup.get("children") or [])
+
+
+def _print_pickups(pickups):
+    if not pickups:
+        print("No pickup contacts found.")
+        return
+    for pickup in pickups:
+        children = ", ".join(pickup.get("children") or [])
+        suffix = f" ({children})" if children else ""
+        phone = f" {pickup.get('phone')}" if pickup.get("phone") else ""
+        print(f"{pickup.get('id')}: {pickup.get('name')}{phone}{suffix}")
+
+
+def _get_authenticated_api(no_input=False):
+    api = TempusApi()
+    if load_session_opt_in(api.session, default_session_path()):
+        return api
+    personnummer = resolve_personnummer(allow_prompt=not no_input)
+    session = login(personnummer=personnummer, allow_prompt=False)
+    return TempusApi(session=session)
+
+
+def _validate_pickup_id(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]+", value) or int(value) <= 0:
+        raise ValueError("--id must be a positive ASCII decimal ID")
+    return value
+
+
+def _validate_non_empty(value, flag):
+    value = "" if value is None else value.strip()
+    if not value:
+        raise ValueError(f"{flag} must not be empty")
+    return value
+
+
+def _pickup_operation(args):
+    has_change = args.name is not None or args.phone is not None
+    if args.remove:
+        if not args.pickup_id:
+            raise ValueError("--remove requires --id")
+        _validate_pickup_id(args.pickup_id)
+        if args.phone is not None or args.child is not None:
+            raise ValueError("--remove cannot be combined with --phone or --child")
+        if args.apply:
+            _validate_non_empty(args.name, "--name")
+        return "remove"
+    if args.pickup_id:
+        _validate_pickup_id(args.pickup_id)
+        if not has_change and args.child is None:
+            raise ValueError("--id requires --name, --phone, --child, or --remove")
+        return "update"
+    if has_change:
+        _validate_non_empty(args.child, "--child")
+        _validate_non_empty(args.name, "--name")
+        _validate_non_empty(args.phone, "--phone")
+        return "create"
+    return "list"
+
+
+def _validate_pickup_args(args):
+    operation = _pickup_operation(args)
+    if args.apply and operation == "list":
+        raise ValueError("--apply requires a pickup change")
+    if args.confirm and not args.apply:
+        raise ValueError("--confirm requires --apply")
+    if args.apply and not args.confirm:
+        raise ValueError("--apply requires --confirm")
+    if operation == "update" and args.name is not None:
+        _validate_non_empty(args.name, "--name")
+    if operation == "update" and args.phone is not None:
+        _validate_non_empty(args.phone, "--phone")
+    if operation == "update" and args.child is not None:
+        _validate_non_empty(args.child, "--child")
+    return operation
+
+
+def _find_pickup(pickups, pickup_id):
+    matches = [pickup for pickup in pickups if str(pickup.get("id")) == str(pickup_id)]
+    if not matches:
+        raise RuntimeError(f"pickup contact {pickup_id} not found")
+    if len(matches) > 1:
+        raise RuntimeError(f"pickup contact {pickup_id} matched multiple records")
+    return matches[0]
+
+
+def _pickup_preview(operation, args, pickups):
+    if operation == "create":
+        proposed = {
+            "id": None,
+            "name": _validate_non_empty(args.name, "--name"),
+            "phone": _validate_non_empty(args.phone, "--phone"),
+            "children": [_validate_non_empty(args.child, "--child")],
+        }
+        return {
+            "mode": "preview",
+            "operation": operation,
+            "existing_pickup": None,
+            "proposed_pickup": proposed,
+            "write_performed": False,
+            "would_write_if_applied": True,
+            "blocked": False,
+        }
+
+    existing = _public_pickup(_find_pickup(pickups, args.pickup_id))
+    if operation == "remove":
+        blocked = args.name is not None and args.name != existing.get("name")
+        result = {
+            "mode": "preview",
+            "operation": operation,
+            "existing_pickup": existing,
+            "proposed_pickup": None,
+            "write_performed": False,
+            "would_write_if_applied": not blocked,
+            "blocked": blocked,
+        }
+        if blocked:
+            result["block_reason"] = "name_confirmation_does_not_match"
+        return result
+
+    proposed = dict(existing)
+    if args.name is not None:
+        proposed["name"] = _validate_non_empty(args.name, "--name")
+    if args.phone is not None:
+        proposed["phone"] = _validate_non_empty(args.phone, "--phone")
+    if args.child is not None:
+        proposed["children"] = [_validate_non_empty(args.child, "--child")]
+    changed = proposed != existing
+    return {
+        "mode": "preview",
+        "operation": operation,
+        "existing_pickup": existing,
+        "proposed_pickup": proposed,
+        "write_performed": False,
+        "would_write_if_applied": changed,
+        "blocked": False,
+    }
+
+
+def _pickup(args):
+    operation = _validate_pickup_args(args)
+    if args.apply:
+        raise RuntimeError(PICKUP_WRITES_DISABLED)
+
+    api = _get_authenticated_api(no_input=args.no_input)
+    pickups = api.pickups()
+    if operation == "list":
+        rows = [_public_pickup(pickup) for pickup in pickups if _child_matches(pickup, args.child)]
+        if args.child and not rows:
+            raise RuntimeError(f"no pickup contacts matching child '{args.child}'")
+        if args.json_output:
+            _print_json(rows)
+        else:
+            _print_pickups(rows)
+        return 0
+
+    preview = _pickup_preview(operation, args, pickups)
+    if args.json_output:
+        _print_json(preview)
+    else:
+        print(f"{operation}: preview")
+        if preview.get("existing_pickup"):
+            print(f"existing: {preview['existing_pickup']}")
+        if preview.get("proposed_pickup"):
+            print(f"proposed: {preview['proposed_pickup']}")
+        if preview.get("blocked"):
+            print(f"blocked: {preview.get('block_reason')}")
+    return 0
 
 
 def _setup(args):
@@ -200,6 +410,9 @@ def _run_command(parser, args):
         login(personnummer=personnummer, freja_timeout=args.freja_timeout, allow_prompt=False)
         print("Login verified. Session was not saved.")
         return 0
+
+    if args.command == "pickup":
+        return _pickup(args)
 
     parser.print_help()
     return 0

@@ -155,11 +155,23 @@ def test_verify_login_return_rejects_login_failure_page():
         verify_login_return(session)
 
 
-def test_verify_authenticated_fails_closed_without_authenticated_read_probe():
-    from tempus_cli.session import verify_authenticated
+def test_verify_authenticated_uses_pickups_read(monkeypatch):
+    from tempus_cli import session as session_module
 
-    with pytest.raises(RuntimeError, match="authenticated read verification is not available"):
-        verify_authenticated(DummySession([]))
+    calls = []
+
+    class FakeApi:
+        def __init__(self, session):
+            calls.append(session)
+
+        def pickups(self):
+            return []
+
+    raw_session = object()
+    monkeypatch.setattr(session_module, "TempusApi", FakeApi)
+
+    assert session_module.verify_authenticated(raw_session) is True
+    assert calls == [raw_session]
 
 
 def test_status_text_reports_no_persisted_session(tmp_path):

@@ -1,6 +1,6 @@
 # Project Overview
 
-`tempus-cli` is an unofficial, read-only Python CLI for Tempus Home. It uses Freja eID+ through Stockholms stad and stores opted-in local configuration outside the repository.
+`tempus-cli` is an unofficial Python CLI for Tempus Home. It uses Freja eID+ through Stockholms stad and stores opted-in local configuration outside the repository.
 
 ## Setup And Checks
 
@@ -16,8 +16,8 @@ Run the focused tests for changed behavior before the full suite.
 
 ## Safety Rules
 
-- Preserve the central HTTPS host/path allowlist and read-only RPC allowlist.
-- Do not add remote write operations without an explicitly verified RPC and an explicit user request.
+- Preserve the central HTTPS host/path allowlist, read-only RPC allowlist, and separate pickup-write allowlist.
+- Do not add remote write operations without an explicitly verified RPC, sanitized fixtures, and an explicit user request.
 - Never commit or log real personal numbers, cookies, sessions, SAML values, tokens, or unredacted sensitive URLs.
 - Use generated placeholder values in tests instead of plausible personal identifiers.
 - Keep prompts TTY-only. Non-interactive commands must fail with actionable stderr and no traceback.
@@ -26,10 +26,10 @@ Run the focused tests for changed behavior before the full suite.
 
 ## Command Interface
 
-Working commands are `status`, `setup`, `schemas`, `providers`, and `login`.
+Working commands are `status`, `setup`, `schemas`, `providers`, `login`, and `pickup`.
 
 - Human-readable output is the default.
-- Read commands support `--json`.
+- Read commands and `pickup` support `--json`.
 - `TEMPUS_PERSONNUMMER` is the only supported personal-number environment variable.
 - `--no-input` must disable all prompting.
 

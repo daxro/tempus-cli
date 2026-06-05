@@ -34,12 +34,24 @@ def int_rpc_payload(permutation, method, value):
     return f"7|0|5|{GWT_MODULE_BASE}|{permutation}|{HOME_SERVICE}|{method}|I|1|2|3|4|1|5|{int(value)}|"
 
 
+def no_arg_rpc_payload(permutation, method):
+    return f"7|0|4|{GWT_MODULE_BASE}|{permutation}|{HOME_SERVICE}|{method}|1|2|3|4|0|"
+
+
 def payload_get_schemas(permutation, area_id):
     return int_rpc_payload(permutation, "getSchemas", area_id)
 
 
 def payload_get_grand_id_identity_providers(permutation, schema_id):
     return int_rpc_payload(permutation, "getGrandIdIdentityProviders", schema_id)
+
+
+def payload_get_pickups(permutation):
+    return no_arg_rpc_payload(permutation, "getPickups")
+
+
+def payload_remove_pickup(permutation, pickup_id):
+    return int_rpc_payload(permutation, "removePickup", pickup_id)
 
 
 def _string_table(response):
@@ -59,6 +71,61 @@ def _string_table(response):
                 walk(y)
     walk(data)
     return strings
+
+
+def _json_payload(response):
+    text = response[4:] if response.startswith("//OK") else response
+    m = re.search(r"(\[[\s\S]*\]|\{[\s\S]*\})", text)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(1))
+    except json.JSONDecodeError:
+        return None
+
+
+def _walk_dicts(value):
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _walk_dicts(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_dicts(child)
+
+
+def _normalize_children(value):
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    children = []
+    if isinstance(value, list):
+        for child in value:
+            if isinstance(child, str):
+                children.append(child)
+            elif isinstance(child, dict):
+                name = child.get("name") or child.get("displayName") or child.get("fullName")
+                if name:
+                    children.append(str(name))
+    return children
+
+
+def _normalize_pickup(raw):
+    pickup_id = raw.get("id") or raw.get("pickupId") or raw.get("pickup_id")
+    name = raw.get("name") or raw.get("displayName") or raw.get("fullName")
+    phone = raw.get("phone") or raw.get("phoneNumber") or raw.get("mobile") or raw.get("number")
+    children = _normalize_children(raw.get("children") or raw.get("child") or raw.get("homeChildren"))
+    if pickup_id is None and not name and not phone:
+        return None
+    pickup = {
+        "id": str(pickup_id) if pickup_id is not None else None,
+        "name": name,
+        "phone": phone,
+        "children": children,
+        "_raw": raw,
+    }
+    return pickup
 
 
 def parse_schemas(response):
@@ -84,3 +151,22 @@ def parse_identity_providers(response):
             rows.append({"name": name, "option": useful[i+1]})
             break
     return rows
+
+
+def parse_pickups(response):
+    if not response.startswith("//OK"):
+        raise RuntimeError("Tempus pickup response was not a successful GWT RPC response")
+    data = _json_payload(response)
+    if data is None:
+        raise RuntimeError("Tempus pickup response could not be parsed")
+    if data == []:
+        return []
+
+    pickups = []
+    for raw in _walk_dicts(data):
+        pickup = _normalize_pickup(raw)
+        if pickup and pickup not in pickups:
+            pickups.append(pickup)
+    if not pickups:
+        raise RuntimeError("Tempus pickup response did not contain recognized pickup data")
+    return pickups

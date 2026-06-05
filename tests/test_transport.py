@@ -2,7 +2,7 @@ import pytest
 import requests
 
 from tempus_cli.errors import SafetyError
-from tempus_cli.gwt import HOME_SERVICE, GWT_MODULE_BASE, TEMPUS_HOME_URL, payload_get_schemas
+from tempus_cli.gwt import HOME_SERVICE, GWT_MODULE_BASE, TEMPUS_HOME_URL, payload_get_pickups, payload_get_schemas, payload_remove_pickup
 from tempus_cli.net import TempusNetworkError
 from tempus_cli.transport import ReadOnlyTempusTransport, rpc_method_from_payload
 
@@ -26,6 +26,53 @@ def test_blocks_write_like_rpc():
     t = ReadOnlyTempusTransport(object())
     with pytest.raises(SafetyError):
         t._check_rpc_method("updateRecord")
+
+
+def test_allows_get_pickups_as_read_only_rpc():
+    t = ReadOnlyTempusTransport(object())
+    t._check_rpc_method("getPickups")
+
+
+def test_generic_rpc_blocks_pickup_write():
+    t = ReadOnlyTempusTransport(object())
+    with pytest.raises(SafetyError, match="write-like"):
+        t._check_rpc_method("removePickup")
+
+
+def test_pickup_write_path_allows_only_pickup_writes():
+    t = ReadOnlyTempusTransport(object())
+    t._check_pickup_write_rpc_method("removePickup")
+    with pytest.raises(SafetyError, match="non-pickup"):
+        t._check_pickup_write_rpc_method("updateRecord")
+
+
+def test_pickup_write_path_recomputes_method_from_payload():
+    class Session:
+        def __init__(self):
+            self.payload = None
+
+        def post(self, url, data=None, headers=None, **kwargs):
+            self.payload = data
+            response = requests.Response()
+            response.status_code = 200
+            return response
+
+    session = Session()
+    t = ReadOnlyTempusTransport(session)
+    t.post_pickup_write_rpc(
+        "https://home.tempusinfo.se/tempusHome/tempusHome/service",
+        payload_remove_pickup("A" * 32, 123),
+    )
+    assert rpc_method_from_payload(session.payload) == "removePickup"
+
+
+def test_pickup_write_path_rejects_read_payload():
+    t = ReadOnlyTempusTransport(object())
+    with pytest.raises(SafetyError, match="non-pickup"):
+        t.post_pickup_write_rpc(
+            "https://home.tempusinfo.se/tempusHome/tempusHome/service",
+            payload_get_pickups("A" * 32),
+        )
 
 
 def test_blocks_unknown_rpc():

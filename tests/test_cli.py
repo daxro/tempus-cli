@@ -14,7 +14,7 @@ def test_help_lists_only_working_commands(capsys):
     assert "usage: tempus" in out
 
     subparsers = next(action for action in build_parser()._actions if hasattr(action, "choices") and action.choices)
-    assert set(subparsers.choices) == {"status", "setup", "schemas", "providers", "login"}
+    assert set(subparsers.choices) == {"status", "setup", "schemas", "providers", "login", "pickup"}
 
 
 def test_status_runs(capsys):
@@ -225,3 +225,132 @@ def test_keyboard_interrupt_returns_130(monkeypatch, capsys):
 
     assert main(["schemas"]) == 130
     assert capsys.readouterr().err == "Interrupted.\n"
+
+
+class FakePickupApi:
+    def __init__(self, rows=None):
+        self.rows = rows if rows is not None else [
+            {"id": "123", "name": "Example Guardian", "phone": "0700000000", "children": ["Example Child"], "_raw": {"opaque": "x"}}
+        ]
+
+    def pickups(self):
+        return self.rows
+
+
+def test_pickup_list_json_has_stable_shape(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakePickupApi())
+
+    assert main(["pickup", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == [
+        {"id": "123", "name": "Example Guardian", "phone": "0700000000", "children": ["Example Child"]}
+    ]
+
+
+def test_pickup_list_filters_child(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakePickupApi())
+
+    assert main(["pickup", "--child", "example child", "--json"]) == 0
+    assert len(json.loads(capsys.readouterr().out)) == 1
+
+
+def test_pickup_child_filter_no_match_fails(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakePickupApi())
+
+    assert main(["pickup", "--child", "Unknown", "--json"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no pickup contacts matching child" in captured.err
+
+
+def test_pickup_create_preview_json(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakePickupApi([]))
+
+    assert main(["pickup", "--child", "Example Child", "--name", "Example Guardian", "--phone", "0700000000", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["operation"] == "create"
+    assert data["write_performed"] is False
+    assert data["would_write_if_applied"] is True
+    assert data["proposed_pickup"] == {
+        "id": None,
+        "name": "Example Guardian",
+        "phone": "0700000000",
+        "children": ["Example Child"],
+    }
+
+
+def test_pickup_update_preview_preserves_unspecified_fields(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakePickupApi())
+
+    assert main(["pickup", "--id", "123", "--phone", "0711111111", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["operation"] == "update"
+    assert data["existing_pickup"]["name"] == "Example Guardian"
+    assert data["proposed_pickup"] == {
+        "id": "123",
+        "name": "Example Guardian",
+        "phone": "0711111111",
+        "children": ["Example Child"],
+    }
+
+
+def test_pickup_update_noop_preview(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakePickupApi())
+
+    assert main(["pickup", "--id", "123", "--phone", "0700000000", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["would_write_if_applied"] is False
+
+
+def test_pickup_remove_preview_requires_matching_name_to_unblock(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakePickupApi())
+
+    assert main(["pickup", "--id", "123", "--remove", "--name", "Wrong Name", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["operation"] == "remove"
+    assert data["blocked"] is True
+    assert data["block_reason"] == "name_confirmation_does_not_match"
+
+
+def test_pickup_missing_confirm_fails_before_session(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    calls = []
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: calls.append(no_input))
+
+    assert main(["pickup", "--child", "Example Child", "--name", "Example Guardian", "--phone", "0700000000", "--apply"]) == 2
+    assert calls == []
+    assert "--apply requires --confirm" in capsys.readouterr().err
+
+
+def test_pickup_apply_is_gated_before_session(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    calls = []
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: calls.append(no_input))
+
+    assert main(["pickup", "--child", "Example Child", "--name", "Example Guardian", "--phone", "0700000000", "--apply", "--confirm"]) == 1
+    assert calls == []
+    assert "pickup writes require sanitized Tempus write fixtures" in capsys.readouterr().err
+
+
+def test_pickup_target_not_found(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakePickupApi([]))
+
+    assert main(["pickup", "--id", "123", "--phone", "0711111111", "--json"]) == 1
+    assert "pickup contact 123 not found" in capsys.readouterr().err
