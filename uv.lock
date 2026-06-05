@@ -225,12 +225,27 @@ wheels = [
 ]
 
 [[package]]
+name = "stockholm-freja"
+version = "0.1.0"
+source = { directory = "../stockholm-freja" }
+dependencies = [
+    { name = "requests" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "requests", specifier = ">=2.31.0" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.2" }]
+
+[[package]]
 name = "tempus-cli"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "platformdirs" },
     { name = "requests" },
+    { name = "stockholm-freja" },
 ]
 
 [package.dev-dependencies]
@@ -242,6 +257,7 @@ dev = [
 requires-dist = [
     { name = "platformdirs", specifier = ">=4.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
+    { name = "stockholm-freja", directory = "../stockholm-freja" },
 ]
 
 [package.metadata.requires-dev]

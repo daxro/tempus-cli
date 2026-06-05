@@ -1,5 +1,8 @@
 import json
 
+import requests
+from stockholm_freja import FrejaError
+
 from tempus_cli.cli import build_parser, main
 
 TEST_PERSONNUMMER = "0" * 12
@@ -175,6 +178,40 @@ def test_unexpected_failure_has_no_traceback(monkeypatch, capsys):
     assert captured.out == ""
     assert "unexpected failure: boom" in captured.err
     assert "Traceback" not in captured.err
+
+
+def test_freja_error_is_redacted_without_unexpected_prefix(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    class FakeApi:
+        def schemas(self, area_id):
+            raise FrejaError("failed for https://example.test/?SAMLTRANSACTIONID=secret")
+
+    monkeypatch.setattr(cli_module, "TempusApi", FakeApi)
+
+    assert main(["schemas"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unexpected failure" not in captured.err
+    assert "SAMLTRANSACTIONID=%5BREDACTED%5D" in captured.err
+    assert "secret" not in captured.err
+
+
+def test_request_exception_is_redacted_without_unexpected_prefix(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    class FakeApi:
+        def schemas(self, area_id):
+            raise requests.TooManyRedirects("https://example.test/?SAMLTRANSACTIONID=secret")
+
+    monkeypatch.setattr(cli_module, "TempusApi", FakeApi)
+
+    assert main(["schemas"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unexpected failure" not in captured.err
+    assert "SAMLTRANSACTIONID=%5BREDACTED%5D" in captured.err
+    assert "secret" not in captured.err
 
 
 def test_keyboard_interrupt_returns_130(monkeypatch, capsys):

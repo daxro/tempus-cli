@@ -3,9 +3,11 @@ import json
 import os
 import sys
 
+import requests
+
 from . import __version__
 from .api import TempusApi
-from .errors import TempusError
+from .errors import FrejaError, TempusError
 from .paths import default_config_path, default_session_path
 from .redact import redact_text
 from .session import login, read_config_personnummer, resolve_personnummer, status_text, verify_authenticated
@@ -219,6 +221,14 @@ def main(argv=None):
     except KeyboardInterrupt:
         print("Interrupted.", file=sys.stderr)
         return 130
+    except FrejaError as exc:
+        message = redact_text(str(exc)) or "Freja authentication failed"
+        print(f"Error: {message}", file=sys.stderr)
+        return 1
+    except requests.exceptions.RequestException as exc:
+        message = redact_text(str(exc)) or exc.__class__.__name__
+        print(f"Error: {message}", file=sys.stderr)
+        return 1
     except (TempusError, RuntimeError, OSError) as exc:
         message = redact_text(str(exc)) or exc.__class__.__name__
         print(f"Error: {message}", file=sys.stderr)

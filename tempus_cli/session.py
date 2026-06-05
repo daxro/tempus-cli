@@ -137,11 +137,11 @@ def login(personnummer=None, session=None, quiet=False, freja_timeout=180.0, all
     freja_url = urljoin(page_url, find_freja_link(html))
     freja_page = follow_redirects(transport, transport.get(freja_url, allow_redirects=False, timeout=HTTP_TIMEOUT))
     freja_login(
-        transport,
+        session,
         freja_page.url,
         personnummer,
         timeout=freja_timeout,
-        on_started=(lambda: print("Approve the login in Freja eID+.", file=sys.stderr, flush=True)) if not quiet else None,
+        on_started=lambda: print("Approve the login in Freja eID+.", file=sys.stderr, flush=True),
     )
     resp = follow_redirects(transport, transport.get(freja_page.url, allow_redirects=False, timeout=HTTP_TIMEOUT))
     handle_saml_chain(transport, resp.text, resp.url)

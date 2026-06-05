@@ -44,8 +44,8 @@ def _mock_login_flow(monkeypatch, session_module, calls):
         def get(self, *args, **kwargs):
             return DummyResponse()
 
-    def fake_freja_login(transport, url, personnummer, on_started=None, timeout=None):
-        calls.update(personnummer=personnummer, timeout=timeout)
+    def fake_freja_login(raw_session, url, personnummer, on_started=None, timeout=None):
+        calls.update(raw_session=raw_session, personnummer=personnummer, timeout=timeout)
         if on_started:
             on_started()
 
@@ -66,16 +66,17 @@ def test_login_passes_timeout_and_progress_to_stderr(monkeypatch, capsys):
 
     calls = {}
     _mock_login_flow(monkeypatch, session_module, calls)
+    raw_session = object()
 
-    session_module.login(personnummer=TEST_PERSONNUMMER, session=object(), freja_timeout=180)
+    session_module.login(personnummer=TEST_PERSONNUMMER, session=raw_session, freja_timeout=180)
 
     captured = capsys.readouterr()
-    assert calls == {"personnummer": TEST_PERSONNUMMER, "timeout": 180}
+    assert calls == {"raw_session": raw_session, "personnummer": TEST_PERSONNUMMER, "timeout": 180}
     assert captured.out == ""
     assert "Freja" in captured.err
 
 
-def test_login_uses_tempus_personnummer_env(monkeypatch):
+def test_login_uses_tempus_personnummer_env(monkeypatch, capsys):
     from tempus_cli import session as session_module
 
     calls = {}
@@ -85,6 +86,7 @@ def test_login_uses_tempus_personnummer_env(monkeypatch):
     session_module.login(session=object(), quiet=True)
 
     assert calls["personnummer"] == TEST_PERSONNUMMER
+    assert "Freja" in capsys.readouterr().err
 
 
 def test_resolve_personnummer_uses_saved_config(monkeypatch, tmp_path):

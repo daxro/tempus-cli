@@ -13,6 +13,7 @@ requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31.0",
     "platformdirs>=4.0.0",
+    "stockholm-freja>=0.1.0,<0.2.0",
 ]
 
 [project.scripts]
@@ -30,3 +31,6 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv.sources]
+stockholm-freja = { path = "../stockholm-freja" }
