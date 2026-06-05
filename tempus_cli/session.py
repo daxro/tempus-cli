@@ -1,6 +1,7 @@
 import getpass
 import os
 import re
+import sys
 from html import unescape
 from urllib.parse import urlencode, urljoin
 
@@ -88,7 +89,7 @@ def stockholm_login_url(schema_id, provider_option="STOCKHOLM_PROD", origin=None
     return "https://login.tempusinfo.se/login/saml/login?" + urlencode(params)
 
 
-def _read_config_personnummer(path=None):
+def read_config_personnummer(path=None):
     path = path or default_config_path()
     try:
         lines = path.read_text().splitlines()
@@ -100,11 +101,23 @@ def _read_config_personnummer(path=None):
     return None
 
 
-def _resolve_personnummer(personnummer=None):
-    return personnummer or os.environ.get("TEMPUS_PERSONNUMMER") or _read_config_personnummer()
+def validate_personnummer(personnummer):
+    if not re.fullmatch(r"\d{12}", personnummer or ""):
+        raise ValueError("TEMPUS_PERSONNUMMER must contain exactly 12 digits")
+    return personnummer
 
 
-def login(personnummer=None, session=None, quiet=False, freja_timeout=180.0):
+def resolve_personnummer(personnummer=None, *, allow_prompt=True):
+    value = personnummer or os.environ.get("TEMPUS_PERSONNUMMER") or read_config_personnummer()
+    if value:
+        return validate_personnummer(value)
+    if not allow_prompt or not sys.stdin.isatty():
+        raise ValueError("TEMPUS_PERSONNUMMER is required when input is non-interactive")
+    return validate_personnummer(getpass.getpass("Personal number for Freja (hidden): ").strip())
+
+
+def login(personnummer=None, session=None, quiet=False, freja_timeout=180.0, allow_prompt=True):
+    personnummer = resolve_personnummer(personnummer, allow_prompt=allow_prompt)
     session = session or new_session()
     transport = ReadOnlyTempusTransport(session)
     api = TempusApi(session=session)
@@ -122,16 +135,13 @@ def login(personnummer=None, session=None, quiet=False, freja_timeout=180.0):
     resp = follow_redirects(transport, resp)
     html, page_url = handle_saml_chain(transport, resp.text, resp.url)
     freja_url = urljoin(page_url, find_freja_link(html))
-    personnummer = _resolve_personnummer(personnummer)
-    if personnummer is None:
-        personnummer = getpass.getpass("Personnummer för Freja (visas inte): ")
     freja_page = follow_redirects(transport, transport.get(freja_url, allow_redirects=False, timeout=HTTP_TIMEOUT))
     freja_login(
         transport,
         freja_page.url,
         personnummer,
         timeout=freja_timeout,
-        on_started=(lambda: print("Godkänn i Freja eID+...", flush=True)) if not quiet else None,
+        on_started=(lambda: print("Approve the login in Freja eID+.", file=sys.stderr, flush=True)) if not quiet else None,
     )
     resp = follow_redirects(transport, transport.get(freja_page.url, allow_redirects=False, timeout=HTTP_TIMEOUT))
     handle_saml_chain(transport, resp.text, resp.url)
@@ -142,9 +152,8 @@ def login(personnummer=None, session=None, quiet=False, freja_timeout=180.0):
 def verify_login_return(session):
     """Verify that the login flow lands back on Tempus Home.
 
-    This is not a proof that authenticated child/pickup data can be read; those
-    RPC methods are still unknown. It only prevents known failed login returns
-    from being reported as a clean login flow.
+    This only prevents known failed login returns from being reported as a
+    clean login flow.
     """
     transport = ReadOnlyTempusTransport(session)
     resp = follow_redirects(

@@ -1,20 +1,27 @@
 [build-system]
-requires = ["setuptools>=68.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "tempus-cli"
 version = "0.1.0"
+description = "Unofficial read-only CLI for Tempus Home"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31.0",
-    "python-dotenv>=1.0.0",
     "platformdirs>=4.0.0",
-    "playwright>=1.60.0",
 ]
 
 [project.scripts]
 tempus = "tempus_cli.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/daxro/tempus-cli"
+Repository = "https://github.com/daxro/tempus-cli"
+Issues = "https://github.com/daxro/tempus-cli/issues"
 
 [dependency-groups]
 dev = [

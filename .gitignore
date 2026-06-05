@@ -1,11 +1,25 @@
+# Local environment and sensitive files
 .env
+.env.*
+config.env
+*session*.json
+*.har
+
+# Python
 .venv/
 __pycache__/
-.pytest_cache/
+*.py[cod]
+*.egg-info/
 build/
 dist/
-*.egg-info/
-session.json
-*session*.json
-tempus-discovery*.json
-docs/plans/
+
+# Tests and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Local system and agent scratch
+.DS_Store
+_temp_inbox/

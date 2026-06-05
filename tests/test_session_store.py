@@ -16,6 +16,17 @@ def test_save_opt_in_0600_and_load(tmp_path):
     assert s2.cookies.get("a") == "b"
 
 
+def test_save_opt_in_repairs_existing_file_permissions(tmp_path):
+    session = requests.Session()
+    path = tmp_path / "session.json"
+    path.write_text("[]")
+    path.chmod(0o644)
+
+    save_session_opt_in(session, path)
+
+    assert oct(os.stat(path).st_mode & 0o777) == "0o600"
+
+
 def test_missing_and_corrupt_return_false(tmp_path):
     s = requests.Session()
     assert load_session_opt_in(s, tmp_path / "missing.json") is False

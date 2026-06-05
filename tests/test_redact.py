@@ -2,7 +2,7 @@ from tempus_cli.redact import redact_text
 
 
 def test_redacts_personnummer_and_tokens_and_cookies():
-    text = "Cookie: a=b\nSet-Cookie: SID=secret; Path=/\n198001011234 abcdefabcdefabcdefabcdefabcdefab"
+    text = f"Cookie: a=b\nSet-Cookie: SID=secret; Path=/\n{'0' * 12} abcdefabcdefabcdefabcdefabcdefab"
     out = redact_text(text)
     assert "[REDACTED_PNR]" in out
     assert "Cookie: [REDACTED]" in out

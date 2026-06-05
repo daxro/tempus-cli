@@ -1,32 +1,19 @@
 # tempus-cli
 
-Read-only CLI for Tempus Hemma. This is a standalone repo, separate from Botsson, deformentor and laget.
+An unofficial, read-only CLI for Tempus Home using Freja eID+ through Stockholms stad.
 
-## Safety contract
+This project is not affiliated with Tempus or Stockholms stad.
 
-- Phase 1 is read-only. There are no commands that save, update, submit or confirm Tempus data.
-- Tempus writes are blocked centrally by the transport guard.
-- Login uses Freja eID+ through Stockholms stad.
-- `login` keeps sessions in-memory by default. `setup` explicitly saves config and session outside the repo.
-- Debug/discovery output redacts cookies, SAML fields, query values, personnummer and token-like values.
+## Install
 
-## Commands
+Requires Python 3.10 or newer and [uv](https://docs.astral.sh/uv/).
 
 ```bash
+uv tool install git+https://github.com/daxro/tempus-cli.git
 tempus --help
-tempus setup
-tempus setup --no-input
-tempus status
-tempus status --json
-tempus schemas --area Stockholm
-tempus schemas --area-id 12
-tempus providers --schema-id 399
-tempus login
-tempus children
-tempus pickup --child Viggo --date YYYY-MM-DD
 ```
 
-`children` and `pickup` are placeholders until the authenticated read-only RPC methods have been discovered. They fail closed and do not guess method names.
+Uninstall with `uv tool uninstall tempus-cli`.
 
 ## Setup
 
@@ -36,50 +23,51 @@ Interactive setup:
 tempus setup
 ```
 
-Non-interactive setup, same shape as deformentor:
+Non-interactive setup:
 
 ```bash
 TEMPUS_PERSONNUMMER=YYYYMMDDNNNN tempus setup --no-input
 ```
 
-`PERSONNUMMER` is also accepted for compatibility. Setup uses the personnummer-based Freja flow through Stockholm, asks you to approve in Freja eID+, then saves config and session outside the repo with `0600` file permissions. The normal `tempus login` command still verifies login without saving a session.
+Setup requires human approval in Freja eID+. It saves local config and session files outside the repository with `0600` permissions. It does not write Tempus data.
 
-## Status
-
-Human-readable:
+## Commands
 
 ```bash
 tempus status
-```
-
-Machine-readable:
-
-```bash
 tempus status --json
+tempus schemas --area Stockholm --json
+tempus providers --schema-id 399 --json
+tempus login
 ```
 
-Status reports whether config exists, whether a persisted session exists, and whether authenticated read verification is available. Authenticated child/pickup reads still remain disabled until the read RPCs are discovered.
+Human-readable output is the default. `status`, `schemas`, and `providers` support stable JSON for scripts and agents.
 
-## Examples
+`login` verifies the Freja login flow without saving a session. `status` fails closed when authenticated read verification is unavailable.
 
-```bash
-tempus schemas --area Stockholm
-tempus providers --schema-id 399
-tempus pickup --child Viggo --date 2026-06-08
-```
+## Safety
 
-Pickup is read/preview only. Tempus writes are disabled until a verified write RPC exists.
+- Remote Tempus operations are read-only.
+- Unknown and write-like Tempus RPC methods are blocked centrally.
+- Session files, cookies, SAML values, query values, personal numbers, and token-like values must never be committed or shared.
+- Network access is restricted to HTTPS and an explicit host/path allowlist.
 
-## Exit codes
+## Agents
 
-- `0`: success
-- `1`: runtime, network, login, or discovery error
-- `2`: invalid input or usage error
+Agents operating the CLI should read [`.agents/skills/tempus-cli/SKILL.md`](.agents/skills/tempus-cli/SKILL.md).
+
+Agents modifying this repository should read [`AGENTS.md`](AGENTS.md).
 
 ## Development
 
 ```bash
+uv sync --locked
 uv run pytest -q
 uv run python -m compileall -q tempus_cli tests
+uv build
 git diff --check
 ```
+
+## License
+
+[MIT](LICENSE)

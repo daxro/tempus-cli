@@ -36,9 +36,3 @@ class TempusApi:
         resp = self.transport.post_rpc(gwt.GWT_SERVICE_URL, payload, headers=gwt.headers(perm), timeout=gwt.HTTP_TIMEOUT)
         resp.raise_for_status()
         return gwt.parse_identity_providers(resp.text)
-
-    def children(self):
-        raise NotImplementedError("Authenticated child-list RPC is not discovered yet")
-
-    def pickup(self, child, date):
-        raise NotImplementedError("Authenticated pickup RPC is not discovered yet")

@@ -34,16 +34,8 @@ def int_rpc_payload(permutation, method, value):
     return f"7|0|5|{GWT_MODULE_BASE}|{permutation}|{HOME_SERVICE}|{method}|I|1|2|3|4|1|5|{int(value)}|"
 
 
-def noarg_rpc_payload(permutation, method):
-    return f"7|0|4|{GWT_MODULE_BASE}|{permutation}|{HOME_SERVICE}|{method}|1|2|3|4|0|"
-
-
 def payload_get_schemas(permutation, area_id):
     return int_rpc_payload(permutation, "getSchemas", area_id)
-
-
-def payload_get_applyable_schemas(permutation):
-    return noarg_rpc_payload(permutation, "getApplyableSchemas")
 
 
 def payload_get_grand_id_identity_providers(permutation, schema_id):

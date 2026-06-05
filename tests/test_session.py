@@ -2,6 +2,8 @@ import pytest
 
 from tempus_cli.session import find_freja_link, stockholm_login_url
 
+TEST_PERSONNUMMER = "0" * 12
+
 
 def test_find_freja_link_finds_href_variants():
     html = '<a href="/login/freja/start?x=1">Freja</a>'
@@ -24,78 +26,91 @@ def test_stockholm_login_url_keeps_parameters_out_of_logs_only_by_caller():
     assert "createLoginCookie=true" in url
 
 
-def test_login_passes_custom_freja_timeout(monkeypatch):
-    from tempus_cli import session as session_module
-
-    calls = {}
-
+def _mock_login_flow(monkeypatch, session_module, calls):
     class FakeApi:
         def __init__(self, session=None):
             pass
+
         def schemas(self, area_id):
             return [{"name": "Stockholms stad", "id": 399}]
+
         def identity_providers(self, schema_id):
             return [{"name": "Stockholm-inlogg", "option": "STOCKHOLM_PROD"}]
 
     class FakeTransport:
         def __init__(self, session):
             pass
+
         def get(self, *args, **kwargs):
             return DummyResponse()
+
+    def fake_freja_login(transport, url, personnummer, on_started=None, timeout=None):
+        calls.update(personnummer=personnummer, timeout=timeout)
+        if on_started:
+            on_started()
 
     monkeypatch.setattr(session_module, "TempusApi", FakeApi)
     monkeypatch.setattr(session_module, "ReadOnlyTempusTransport", FakeTransport)
     monkeypatch.setattr(session_module, "follow_redirects", lambda transport, resp: resp)
-    monkeypatch.setattr(session_module, "handle_saml_chain", lambda transport, html, url: ('<a href="/freja/start">Freja</a>', 'https://login001.stockholm.se/page'))
-    monkeypatch.setattr(session_module, "freja_login", lambda transport, url, personnummer, on_started=None, timeout=None: calls.update(timeout=timeout))
+    monkeypatch.setattr(
+        session_module,
+        "handle_saml_chain",
+        lambda transport, html, url: ('<a href="/freja/start">Freja</a>', "https://login001.stockholm.se/page"),
+    )
+    monkeypatch.setattr(session_module, "freja_login", fake_freja_login)
     monkeypatch.setattr(session_module, "verify_login_return", lambda session: True)
 
-    session_module.login(personnummer="198001011234", session=object(), quiet=True, freja_timeout=180)
 
-    assert calls["timeout"] == 180
+def test_login_passes_timeout_and_progress_to_stderr(monkeypatch, capsys):
+    from tempus_cli import session as session_module
+
+    calls = {}
+    _mock_login_flow(monkeypatch, session_module, calls)
+
+    session_module.login(personnummer=TEST_PERSONNUMMER, session=object(), freja_timeout=180)
+
+    captured = capsys.readouterr()
+    assert calls == {"personnummer": TEST_PERSONNUMMER, "timeout": 180}
+    assert captured.out == ""
+    assert "Freja" in captured.err
 
 
 def test_login_uses_tempus_personnummer_env(monkeypatch):
     from tempus_cli import session as session_module
 
     calls = {}
-
-    class FakeApi:
-        def __init__(self, session=None):
-            pass
-        def schemas(self, area_id):
-            return [{"name": "Stockholms stad", "id": 399}]
-        def identity_providers(self, schema_id):
-            return [{"name": "Stockholm-inlogg", "option": "STOCKHOLM_PROD"}]
-
-    class FakeTransport:
-        def __init__(self, session):
-            pass
-        def get(self, *args, **kwargs):
-            return DummyResponse()
-
-    monkeypatch.setenv("TEMPUS_PERSONNUMMER", "198001011234")
-    monkeypatch.setattr(session_module, "TempusApi", FakeApi)
-    monkeypatch.setattr(session_module, "ReadOnlyTempusTransport", FakeTransport)
-    monkeypatch.setattr(session_module, "follow_redirects", lambda transport, resp: resp)
-    monkeypatch.setattr(session_module, "handle_saml_chain", lambda transport, html, url: ('<a href="/freja/start">Freja</a>', 'https://login001.stockholm.se/page'))
-    monkeypatch.setattr(session_module, "freja_login", lambda transport, url, personnummer, on_started=None, timeout=None: calls.update(personnummer=personnummer))
-    monkeypatch.setattr(session_module, "verify_login_return", lambda session: True)
+    monkeypatch.setenv("TEMPUS_PERSONNUMMER", TEST_PERSONNUMMER)
+    _mock_login_flow(monkeypatch, session_module, calls)
 
     session_module.login(session=object(), quiet=True)
 
-    assert calls["personnummer"] == "198001011234"
+    assert calls["personnummer"] == TEST_PERSONNUMMER
 
 
-def test_login_uses_saved_tempus_personnummer_config(monkeypatch, tmp_path):
+def test_resolve_personnummer_uses_saved_config(monkeypatch, tmp_path):
     from tempus_cli import session as session_module
 
     config_file = tmp_path / "config.env"
-    config_file.write_text("TEMPUS_PERSONNUMMER=198001011234\n")
+    config_file.write_text(f"TEMPUS_PERSONNUMMER={TEST_PERSONNUMMER}\n")
     monkeypatch.delenv("TEMPUS_PERSONNUMMER", raising=False)
     monkeypatch.setattr(session_module, "default_config_path", lambda: config_file)
 
-    assert session_module._resolve_personnummer() == "198001011234"
+    assert session_module.resolve_personnummer() == TEST_PERSONNUMMER
+
+
+def test_login_non_interactive_missing_input_fails_before_network(monkeypatch, tmp_path):
+    from tempus_cli import session as session_module
+
+    network_calls = []
+    monkeypatch.delenv("TEMPUS_PERSONNUMMER", raising=False)
+    monkeypatch.setattr(session_module, "default_config_path", lambda: tmp_path / "missing.env")
+    monkeypatch.setattr(session_module.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(session_module, "new_session", lambda: network_calls.append(True))
+
+    with pytest.raises(ValueError, match="non-interactive"):
+        session_module.login()
+
+    assert network_calls == []
 
 
 class DummyResponse:
@@ -170,7 +185,7 @@ def test_status_text_verifies_persisted_session(monkeypatch, tmp_path):
     assert "authenticated: yes" in output
 
 
-def test_status_text_fails_closed_when_authenticated_read_probe_is_missing(monkeypatch, tmp_path):
+def test_status_text_redacts_failed_verification(monkeypatch, tmp_path):
     from tempus_cli import session as session_module
 
     session_file = tmp_path / "session.json"
@@ -179,7 +194,7 @@ def test_status_text_fails_closed_when_authenticated_read_probe_is_missing(monke
     monkeypatch.setattr(
         session_module,
         "verify_authenticated",
-        lambda session: (_ for _ in ()).throw(RuntimeError("authenticated read verification is not available yet: https://example.test/?SAMLTRANSACTIONID=secret")),
+        lambda session: (_ for _ in ()).throw(RuntimeError("verification failed: https://example.test/?SAMLTRANSACTIONID=secret")),
     )
 
     output = session_module.status_text(session_path=session_file)

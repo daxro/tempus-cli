@@ -1,10 +1,17 @@
-from tempus_cli.cli import main
-from tempus_cli.models import PickupStatus
+import json
+
+from tempus_cli.cli import build_parser, main
+
+TEST_PERSONNUMMER = "0" * 12
 
 
-def test_help_runs(capsys):
+def test_help_lists_only_working_commands(capsys):
     assert main([]) == 0
-    assert "usage: tempus" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "usage: tempus" in out
+
+    subparsers = next(action for action in build_parser()._actions if hasattr(action, "choices") and action.choices)
+    assert set(subparsers.choices) == {"status", "setup", "schemas", "providers", "login"}
 
 
 def test_status_runs(capsys):
@@ -15,25 +22,26 @@ def test_status_runs(capsys):
     assert "authenticated:" in out
 
 
-def test_status_json_outputs_machine_readable_status(monkeypatch, capsys, tmp_path):
-    import json
+def test_status_json_has_stable_shape(monkeypatch, capsys, tmp_path):
     from tempus_cli import cli as cli_module
 
     config_file = tmp_path / "config.env"
     session_file = tmp_path / "session.json"
-    config_file.write_text("TEMPUS_PERSONNUMMER=198001011234\n")
+    config_file.write_text(f"TEMPUS_PERSONNUMMER={TEST_PERSONNUMMER}\n")
     monkeypatch.setattr(cli_module, "default_config_path", lambda: config_file)
     monkeypatch.setattr(cli_module, "default_session_path", lambda: session_file)
 
     assert main(["status", "--json"]) == 0
 
     data = json.loads(capsys.readouterr().out)
-    assert data["configured"] is True
-    assert data["personnummer"] == "8001****1234"
-    assert data["session"] == "none"
-    assert data["authenticated"] is False
-    assert data["config_path"] == str(config_file)
-    assert data["session_path"] == str(session_file)
+    assert data == {
+        "configured": True,
+        "session": "none",
+        "authenticated": False,
+        "reason": None,
+        "config_path": str(config_file),
+        "session_path": str(session_file),
+    }
 
 
 def test_setup_no_input_uses_env_writes_config_and_saves_session(monkeypatch, capsys, tmp_path):
@@ -43,35 +51,53 @@ def test_setup_no_input_uses_env_writes_config_and_saves_session(monkeypatch, ca
     session_file = tmp_path / "session.json"
     fake_session = object()
     calls = {}
-    monkeypatch.setenv("TEMPUS_PERSONNUMMER", "198001011234")
+    monkeypatch.setenv("TEMPUS_PERSONNUMMER", TEST_PERSONNUMMER)
     monkeypatch.setattr(cli_module, "default_config_path", lambda: config_file)
     monkeypatch.setattr(cli_module, "default_session_path", lambda: session_file)
-    monkeypatch.setattr(cli_module, "login", lambda personnummer=None, quiet=False, freja_timeout=180.0: calls.update(personnummer=personnummer, quiet=quiet, timeout=freja_timeout) or fake_session)
+    monkeypatch.setattr(
+        cli_module,
+        "login",
+        lambda **kwargs: calls.update(login=kwargs) or fake_session,
+    )
     monkeypatch.setattr(cli_module, "save_session_opt_in", lambda session, path: calls.update(session=session, path=path))
 
     assert main(["setup", "--no-input", "-q"]) == 0
 
-    assert config_file.read_text() == "TEMPUS_PERSONNUMMER=198001011234\n"
-    assert calls == {"personnummer": "198001011234", "quiet": True, "timeout": 180.0, "session": fake_session, "path": session_file}
-    assert "Authenticated." not in capsys.readouterr().err
+    assert config_file.read_text() == f"TEMPUS_PERSONNUMMER={TEST_PERSONNUMMER}\n"
+    assert calls == {
+        "login": {
+            "personnummer": TEST_PERSONNUMMER,
+            "quiet": True,
+            "freja_timeout": 180.0,
+            "allow_prompt": False,
+        },
+        "session": fake_session,
+        "path": session_file,
+    }
+    assert capsys.readouterr().err == ""
 
 
-def test_setup_no_input_requires_personnummer(monkeypatch, capsys, tmp_path):
+def test_setup_no_input_requires_personnummer_before_login(monkeypatch, capsys, tmp_path):
     from tempus_cli import cli as cli_module
+    from tempus_cli import session as session_module
 
+    calls = []
     monkeypatch.delenv("TEMPUS_PERSONNUMMER", raising=False)
-    monkeypatch.delenv("PERSONNUMMER", raising=False)
-    monkeypatch.setattr(cli_module, "default_config_path", lambda: tmp_path / "config.env")
+    monkeypatch.setattr(session_module, "default_config_path", lambda: tmp_path / "missing.env")
+    monkeypatch.setattr(cli_module, "login", lambda **kwargs: calls.append(kwargs))
 
     assert main(["setup", "--no-input"]) == 2
-    assert "TEMPUS_PERSONNUMMER" in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "TEMPUS_PERSONNUMMER" in captured.err
+    assert calls == []
 
 
 def test_setup_does_not_write_config_when_login_fails(monkeypatch, tmp_path):
     from tempus_cli import cli as cli_module
 
     config_file = tmp_path / "config.env"
-    monkeypatch.setenv("TEMPUS_PERSONNUMMER", "198001011234")
+    monkeypatch.setenv("TEMPUS_PERSONNUMMER", TEST_PERSONNUMMER)
     monkeypatch.setattr(cli_module, "default_config_path", lambda: config_file)
     monkeypatch.setattr(cli_module, "login", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("login failed")))
 
@@ -84,90 +110,81 @@ def test_setup_help_includes_examples_and_safety(capsys):
     out = capsys.readouterr().out
     assert "TEMPUS_PERSONNUMMER" in out
     assert "Freja" in out
-    assert "session" in out.lower()
+    assert "does not write Tempus data" in out
 
 
-def test_pickup_help_says_writes_are_disabled(capsys):
-    assert main(["pickup", "--help"]) == 0
-    out = capsys.readouterr().out
-    assert "writes disabled" in out
+def test_schemas_json_has_stable_shape(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
 
-
-def test_pickup_requires_iso_date(capsys):
-    assert main(["pickup", "--child", "Viggo", "--date", "imorgon"]) == 2
-    assert "YYYY-MM-DD" in capsys.readouterr().err
-
-
-def test_pickup_rejects_other_child(capsys):
-    assert main(["pickup", "--child", "Felix", "--date", "2026-06-08"]) == 2
-    assert "Viggo" in capsys.readouterr().err
-
-
-def test_pickup_prints_read_result(monkeypatch, capsys):
-    class FakeApi:
-        def __init__(self, session=None):
-            pass
-
-        def pickup(self, child, date):
-            return PickupStatus(child, date, "08:30", "15:30", None, False, "getPickupRead")
-
-    monkeypatch.setattr("tempus_cli.cli.login", lambda personnummer=None, quiet=True: object())
-    monkeypatch.setattr("tempus_cli.cli.TempusApi", FakeApi)
-
-    assert main(["pickup", "--child", "Viggo", "--date", "2026-06-08"]) == 0
-    out = capsys.readouterr().out
-    assert "Barn: Viggo" in out
-    assert "Hämtas av: -" in out
-    assert "Källa: getPickupRead" in out
-
-
-def test_pickup_passes_personnummer_to_login(monkeypatch, capsys):
-    calls = {}
+    rows = [{"id": 12, "name": "Example", "project": "tempus-example"}]
 
     class FakeApi:
-        def __init__(self, session=None):
-            pass
+        def schemas(self, area_id):
+            assert area_id == 12
+            return rows
 
-        def pickup(self, child, date):
-            return PickupStatus(child, date, "08:30", "15:30", None, False, "getPickupRead")
+    monkeypatch.setattr(cli_module, "TempusApi", FakeApi)
 
-    monkeypatch.setattr("tempus_cli.cli.login", lambda personnummer=None, quiet=True: calls.update(personnummer=personnummer) or object())
-    monkeypatch.setattr("tempus_cli.cli.TempusApi", FakeApi)
-
-    assert main(["pickup", "--child", "Viggo", "--date", "2026-06-08", "--personnummer", "198001011234"]) == 0
-    assert calls["personnummer"] == "198001011234"
+    assert main(["schemas", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == rows
 
 
-def test_pickup_preview_prints_no_change(monkeypatch, capsys):
+def test_providers_json_has_stable_shape(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    rows = [{"name": "Example login", "option": "EXAMPLE"}]
+
     class FakeApi:
-        def __init__(self, session=None):
-            pass
+        def identity_providers(self, schema_id):
+            assert schema_id == 399
+            return rows
 
-        def pickup(self, child, date):
-            return PickupStatus(child, date, "08:30", "15:30", None, False, "getPickupRead")
+    monkeypatch.setattr(cli_module, "TempusApi", FakeApi)
 
-    monkeypatch.setattr("tempus_cli.cli.login", lambda personnummer=None, quiet=True: object())
-    monkeypatch.setattr("tempus_cli.cli.TempusApi", FakeApi)
-
-    assert main(["pickup", "--child", "Viggo", "--date", "2026-06-08", "--pickup", "Farmor"]) == 0
-    out = capsys.readouterr().out
-    assert "Förhandsvisning, ingen ändring gjord." in out
-    assert "Ny hämtas av: Farmor" in out
-    assert '--apply --confirm "Viggo 2026-06-08 Farmor"' in out
+    assert main(["providers", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == rows
 
 
-def test_pickup_apply_requires_exact_confirm(monkeypatch, capsys):
+def test_login_no_input_fails_before_login(monkeypatch, capsys, tmp_path):
+    from tempus_cli import cli as cli_module
+    from tempus_cli import session as session_module
+
+    calls = []
+    monkeypatch.delenv("TEMPUS_PERSONNUMMER", raising=False)
+    monkeypatch.setattr(session_module, "default_config_path", lambda: tmp_path / "missing.env")
+    monkeypatch.setattr(cli_module, "login", lambda **kwargs: calls.append(kwargs))
+
+    assert main(["login", "--no-input"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "TEMPUS_PERSONNUMMER" in captured.err
+    assert calls == []
+
+
+def test_unexpected_failure_has_no_traceback(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
     class FakeApi:
-        def __init__(self, session=None):
-            pass
+        def schemas(self, area_id):
+            raise Exception("boom")
 
-        def pickup(self, child, date):
-            return PickupStatus(child, date, "08:30", "15:30", None, False, "getPickupRead")
+    monkeypatch.setattr(cli_module, "TempusApi", FakeApi)
 
-    monkeypatch.setattr("tempus_cli.cli.login", lambda personnummer=None, quiet=True: object())
-    monkeypatch.setattr("tempus_cli.cli.TempusApi", FakeApi)
+    assert main(["schemas"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unexpected failure: boom" in captured.err
+    assert "Traceback" not in captured.err
 
-    assert main([
-        "pickup", "--child", "Viggo", "--date", "2026-06-08", "--pickup", "Farmor", "--apply", "--confirm", "fel"
-    ]) == 1
-    assert "--confirm måste vara exakt" in capsys.readouterr().err
+
+def test_keyboard_interrupt_returns_130(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    class FakeApi:
+        def schemas(self, area_id):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli_module, "TempusApi", FakeApi)
+
+    assert main(["schemas"]) == 130
+    assert capsys.readouterr().err == "Interrupted.\n"

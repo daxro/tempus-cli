@@ -33,6 +33,7 @@ def save_session_opt_in(session, path):
     fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(cookies, f)
+    os.chmod(path, 0o600)
 
 
 def load_session_opt_in(session, path) -> bool:
@@ -61,12 +62,3 @@ def load_session_opt_in(session, path) -> bool:
             return False
         session.cookies.set_cookie(cookie)
     return True
-
-
-def clear_session_file(path) -> bool:
-    path = Path(path)
-    try:
-        path.unlink()
-        return True
-    except FileNotFoundError:
-        return False
