@@ -1,0 +1,12 @@
+{
+  "argument_order": ["date", "child_id"],
+  "argument_types": ["java.lang.String/2004016611", "I"],
+  "child_id_source": "pickup child row id from getPickups response",
+  "date_representation": "YYYY-MM-DD string",
+  "fixture_type": "tempus_pickup_date_assignment_capture",
+  "gwt_rpc_method": "getPickupDateAssignment",
+  "request_payload": "7|0|6|https://home.tempusinfo.se/tempusHome/tempusHome/|PERMUTATION|se.limesaudio.tempushome.client.HomeService|getPickupDateAssignment|java.lang.String/2004016611|I|1|2|3|4|2|5|6|2026-06-11|101|",
+  "response_body": "//OK[{\"assignment\":{\"date\":\"2026-06-11\",\"childId\":101,\"childName\":\"Generated Child\",\"pickupId\":456,\"pickupName\":\"Generated Pickup Before\",\"assignmentId\":901,\"version\":\"assignment-version-before\",\"writeToken\":\"assignment-write-token-before\"}}]",
+  "scope": "pickup_date_assignment",
+  "version": 1
+}

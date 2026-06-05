@@ -73,6 +73,31 @@ def payload_remove_pickup(permutation, pickup_id):
     return int_rpc_payload(permutation, "removePickup", pickup_id)
 
 
+def string_int_rpc_payload(permutation, method, string_value, int_value):
+    return (
+        f"7|0|6|{GWT_MODULE_BASE}|{permutation}|{HOME_SERVICE}|{method}|"
+        "java.lang.String/2004016611|I|1|2|3|4|2|5|6|"
+        f"{string_value}|{int(int_value)}|"
+    )
+
+
+def assignment_write_rpc_payload(permutation, method, assignment):
+    return (
+        f"7|0|6|{GWT_MODULE_BASE}|{permutation}|{HOME_SERVICE}|{method}|"
+        "java.lang.String/2004016611|I|1|2|3|4|6|5|6|6|6|5|5|"
+        f"{assignment['date']}|{int(assignment['child_id'])}|{int(assignment['pickup_id'])}|"
+        f"{int(assignment['assignment_id'])}|{assignment['version']}|{assignment['write_token']}|"
+    )
+
+
+def payload_get_pickup_date_assignment(permutation, pickup_date, child_id):
+    return string_int_rpc_payload(permutation, "getPickupDateAssignment", pickup_date, child_id)
+
+
+def payload_assign_pickup_for_date(permutation, assignment):
+    return assignment_write_rpc_payload(permutation, "assignPickupForDate", assignment)
+
+
 def _string_table(response):
     m = re.search(r"(\[[\s\S]*\])", response[4:] if response.startswith("//OK") else response)
     if not m:
@@ -145,6 +170,33 @@ def _normalize_pickup(raw):
         "_raw": raw,
     }
     return pickup
+
+
+def _first_dict(value):
+    return next(_walk_dicts(value), None)
+
+
+def _normalize_assignment(raw):
+    assignment_id = raw.get("assignmentId") or raw.get("id")
+    child_id = raw.get("childId") or raw.get("homeChildId") or raw.get("child_id")
+    child_name = raw.get("childName") or raw.get("child") or raw.get("name")
+    pickup_id = raw.get("pickupId") or raw.get("pickup_id")
+    pickup_name = raw.get("pickupName") or raw.get("pickup")
+    pickup_date = raw.get("date") or raw.get("pickupDate")
+    version = raw.get("version") or raw.get("rowVersion")
+    write_token = raw.get("writeToken") or raw.get("token")
+    if not pickup_date or child_id is None or assignment_id is None or version is None or write_token is None:
+        return None
+    return {
+        "date": str(pickup_date),
+        "child_id": str(child_id),
+        "child_name": str(child_name) if child_name is not None else None,
+        "pickup_id": str(pickup_id) if pickup_id is not None else None,
+        "pickup_name": str(pickup_name) if pickup_name is not None else None,
+        "assignment_id": str(assignment_id),
+        "version": str(version),
+        "write_token": str(write_token),
+    }
 
 
 def _string_from_table(strings, ref):
@@ -271,3 +323,48 @@ def parse_pickups(response):
     if not pickups:
         raise RuntimeError("Tempus pickup response did not contain recognized pickup data")
     return pickups
+
+
+def parse_pickup_assignment(response):
+    if not response.startswith("//OK"):
+        raise RuntimeError("Tempus pickup assignment response was not a successful GWT RPC response")
+    data = _json_payload(response)
+    if data is None:
+        raise RuntimeError("Tempus pickup assignment response could not be parsed")
+    raw = None
+    for item in _walk_dicts(data):
+        if "assignment" in item and isinstance(item["assignment"], dict):
+            raw = item["assignment"]
+            break
+        if {"date", "childId", "assignmentId"}.issubset(item):
+            raw = item
+            break
+    if raw is None:
+        raise RuntimeError("Tempus pickup assignment response did not contain recognized assignment data")
+    assignment = _normalize_assignment(raw)
+    if assignment is None:
+        raise RuntimeError("Tempus pickup assignment response missed required assignment fields")
+    return assignment
+
+
+def parse_assignment_write_response(response):
+    if not response.startswith("//OK"):
+        raise RuntimeError("Tempus pickup assignment write response was not a successful GWT RPC response")
+    data = _json_payload(response)
+    if data is None:
+        raise RuntimeError("Tempus pickup assignment write response could not be parsed")
+    raw = _first_dict(data)
+    if raw is None:
+        raise RuntimeError("Tempus pickup assignment write response did not contain recognized result data")
+    success = raw.get("success")
+    if success is False:
+        code = raw.get("errorCode") or "server_validation"
+        message = raw.get("message") or "Tempus rejected pickup assignment"
+        raise RuntimeError(f"Tempus pickup assignment write failed: {code}: {message}")
+    if success is not True:
+        raise RuntimeError("Tempus pickup assignment write response did not confirm success")
+    return {
+        "success": True,
+        "assignment_id": str(raw["assignmentId"]) if raw.get("assignmentId") is not None else None,
+        "version": str(raw["version"]) if raw.get("version") is not None else None,
+    }

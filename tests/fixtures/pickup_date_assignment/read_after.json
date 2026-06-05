@@ -1,0 +1,8 @@
+{
+  "fixture_type": "tempus_pickup_date_assignment_capture",
+  "gwt_rpc_method": "getPickupDateAssignment",
+  "request_payload": "7|0|6|https://home.tempusinfo.se/tempusHome/tempusHome/|PERMUTATION|se.limesaudio.tempushome.client.HomeService|getPickupDateAssignment|java.lang.String/2004016611|I|1|2|3|4|2|5|6|2026-06-11|101|",
+  "response_body": "//OK[{\"assignment\":{\"date\":\"2026-06-11\",\"childId\":101,\"childName\":\"Generated Child\",\"pickupId\":123,\"pickupName\":\"Generated Pickup After\",\"assignmentId\":901,\"version\":\"assignment-version-after\",\"writeToken\":\"assignment-write-token-after\"}}]",
+  "scope": "pickup_date_assignment",
+  "version": 1
+}

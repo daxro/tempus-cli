@@ -48,7 +48,7 @@ Human-readable output is the default. `status`, `schemas`, `providers`, and `pic
 
 `login` verifies the Freja login flow without saving a session. `status` verifies a persisted session with an authenticated pickup read without printing pickup data.
 
-`pickup` lists pickup contacts and previews guarded pickup contact changes. It also previews date-specific pickup assignment with `--date YYYY-MM-DD --child CHILD_NAME --id PICKUP_ID` or `--date YYYY-MM-DD --child CHILD_NAME --name "Pickup Person"`. Preview is the default. Applying create, update, remove, or date-assignment operations remains disabled until sanitized Tempus write fixtures verify the exact GWT payloads.
+`pickup` lists pickup contacts and previews guarded pickup contact changes. It also previews date-specific pickup assignment with `--date YYYY-MM-DD --child CHILD_NAME --id PICKUP_ID` or `--date YYYY-MM-DD --child CHILD_NAME --name "Pickup Person"`. Preview is the default. Existing-contact date assignment can be applied with `--apply --confirm` after stale-state checks and post-write verification. Contact create, update, and remove remain disabled until sanitized Tempus write fixtures verify the exact GWT payloads.
 
 ## Safety
 

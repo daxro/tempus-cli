@@ -2,7 +2,16 @@ import pytest
 import requests
 
 from tempus_cli.errors import SafetyError
-from tempus_cli.gwt import HOME_SERVICE, GWT_MODULE_BASE, TEMPUS_HOME_URL, payload_get_pickups, payload_get_schemas, payload_remove_pickup
+from tempus_cli.gwt import (
+    HOME_SERVICE,
+    GWT_MODULE_BASE,
+    TEMPUS_HOME_URL,
+    payload_assign_pickup_for_date,
+    payload_get_pickup_date_assignment,
+    payload_get_pickups,
+    payload_get_schemas,
+    payload_remove_pickup,
+)
 from tempus_cli.net import TempusNetworkError
 from tempus_cli.transport import ReadOnlyTempusTransport, rpc_method_from_payload
 
@@ -33,6 +42,13 @@ def test_allows_get_pickups_as_read_only_rpc():
     t._check_rpc_method("getPickups")
 
 
+def test_allows_exact_assignment_read_despite_assign_word():
+    t = ReadOnlyTempusTransport(object())
+    t._check_rpc_method("getPickupDateAssignment")
+    with pytest.raises(SafetyError, match="write-like"):
+        t._check_rpc_method("getPickupDateAssignmentUpdate")
+
+
 def test_allows_cookie_auth_and_heartbeat_as_read_only_rpc():
     t = ReadOnlyTempusTransport(object())
     t._check_rpc_method("authenticateUserWithCookies")
@@ -47,9 +63,16 @@ def test_generic_rpc_blocks_pickup_write():
 
 def test_pickup_write_path_allows_only_pickup_writes():
     t = ReadOnlyTempusTransport(object())
-    t._check_pickup_write_rpc_method("removePickup")
+    t._check_pickup_write_rpc_method("assignPickupForDate")
     with pytest.raises(SafetyError, match="non-pickup"):
         t._check_pickup_write_rpc_method("updateRecord")
+
+
+def test_pickup_write_path_blocks_disabled_contact_writes():
+    t = ReadOnlyTempusTransport(object())
+    for method in ("createPickup", "updatePickup", "removePickup"):
+        with pytest.raises(SafetyError, match="non-pickup"):
+            t._check_pickup_write_rpc_method(method)
 
 
 def test_pickup_write_path_recomputes_method_from_payload():
@@ -67,9 +90,28 @@ def test_pickup_write_path_recomputes_method_from_payload():
     t = ReadOnlyTempusTransport(session)
     t.post_pickup_write_rpc(
         "https://home.tempusinfo.se/tempusHome/tempusHome/service",
-        payload_remove_pickup("A" * 32, 123),
+        payload_assign_pickup_for_date(
+            "A" * 32,
+            {
+                "date": "2026-06-11",
+                "child_id": "101",
+                "pickup_id": "123",
+                "assignment_id": "901",
+                "version": "assignment-version-before",
+                "write_token": "assignment-write-token-before",
+            },
+        ),
     )
-    assert rpc_method_from_payload(session.payload) == "removePickup"
+    assert rpc_method_from_payload(session.payload) == "assignPickupForDate"
+
+
+def test_pickup_write_path_rejects_disabled_contact_write_payload():
+    t = ReadOnlyTempusTransport(object())
+    with pytest.raises(SafetyError, match="non-pickup"):
+        t.post_pickup_write_rpc(
+            "https://home.tempusinfo.se/tempusHome/tempusHome/service",
+            payload_remove_pickup("A" * 32, 123),
+        )
 
 
 def test_pickup_write_path_rejects_read_payload():
@@ -79,6 +121,20 @@ def test_pickup_write_path_rejects_read_payload():
             "https://home.tempusinfo.se/tempusHome/tempusHome/service",
             payload_get_pickups("A" * 32),
         )
+
+
+def test_generic_rpc_allows_assignment_read_payload():
+    class Session:
+        def post(self, url, data=None, headers=None, **kwargs):
+            response = requests.Response()
+            response.status_code = 200
+            return response
+
+    t = ReadOnlyTempusTransport(Session())
+    t.post_rpc(
+        "https://home.tempusinfo.se/tempusHome/tempusHome/service",
+        payload_get_pickup_date_assignment("A" * 32, "2026-06-11", 101),
+    )
 
 
 def test_blocks_unknown_rpc():

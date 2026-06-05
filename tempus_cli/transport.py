@@ -25,6 +25,7 @@ ALLOWED_STOCKHOLM_PATH_PREFIXES = (
 )
 READ_ONLY_RPC_METHODS = {
     "authenticateUserWithCookies",
+    "getPickupDateAssignment",
     "getSchemas",
     "getGrandIdIdentityProviders",
     "getPickups",
@@ -33,9 +34,7 @@ READ_ONLY_RPC_METHODS = {
     "isUsernamePasswordEnabled",
 }
 PICKUP_WRITE_RPC_METHODS = {
-    "createPickup",
-    "updatePickup",
-    "removePickup",
+    "assignPickupForDate",
 }
 WRITE_WORDS = (
     "save",
@@ -49,6 +48,7 @@ WRITE_WORDS = (
     "approve",
     "submit",
     "apply",
+    "assign",
     "write",
 )
 LOGIN_FORM_FIELDS = {
@@ -155,11 +155,12 @@ class ReadOnlyTempusTransport:
     def _check_rpc_method(self, method):
         if not method:
             raise SafetyError("Could not identify GWT RPC method")
+        if method in READ_ONLY_RPC_METHODS:
+            return
         lower = method.lower()
         if any(word in lower for word in WRITE_WORDS):
             raise SafetyError(f"Blocked write-like Tempus RPC method: {method}")
-        if method not in READ_ONLY_RPC_METHODS:
-            raise SafetyError(f"Blocked unknown Tempus RPC method: {method}")
+        raise SafetyError(f"Blocked unknown Tempus RPC method: {method}")
 
     def _check_pickup_write_rpc_method(self, method):
         if not method:

@@ -1,11 +1,18 @@
 import json
+from pathlib import Path
 
 import requests
 from stockholm_freja import FrejaError
 
 from tempus_cli.cli import build_parser, main
+from tempus_cli.gwt import parse_assignment_write_response, parse_pickup_assignment
 
 TEST_PERSONNUMMER = "0" * 12
+FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pickup_date_assignment"
+
+
+def _fixture(name):
+    return json.loads((FIXTURE_DIR / name).read_text(encoding="utf-8"))
 
 
 def test_help_lists_only_working_commands(capsys):
@@ -228,13 +235,32 @@ def test_keyboard_interrupt_returns_130(monkeypatch, capsys):
 
 
 class FakePickupApi:
-    def __init__(self, rows=None):
+    def __init__(self, rows=None, assignments=None, write_response=None):
         self.rows = rows if rows is not None else [
-            {"id": "123", "name": "Example Guardian", "phone": "0700000000", "children": ["Example Child"], "_raw": {"opaque": "x"}}
+            {
+                "id": "123",
+                "name": "Example Guardian",
+                "phone": "0700000000",
+                "children": ["Example Child"],
+                "_raw": {"children": [{"id": 101, "name": "Example Child"}], "opaque": "x"},
+            }
         ]
+        self.assignments = list(assignments or [parse_pickup_assignment(_fixture("read_before.json")["response_body"])])
+        self.write_response = write_response or parse_assignment_write_response(_fixture("write_assignment.json")["response_body"])
+        self.writes = []
 
     def pickups(self):
         return self.rows
+
+    def pickup_assignment(self, pickup_date, child_id):
+        assignment = self.assignments.pop(0) if len(self.assignments) > 1 else self.assignments[0]
+        assert pickup_date == "2026-06-11"
+        assert child_id == "101"
+        return assignment
+
+    def assign_pickup(self, assignment):
+        self.writes.append(assignment)
+        return self.write_response
 
 
 def test_pickup_list_json_has_stable_shape(monkeypatch, capsys):
@@ -325,27 +351,45 @@ def test_pickup_remove_preview_requires_matching_name_to_unblock(monkeypatch, ca
     assert data["block_reason"] == "name_confirmation_does_not_match"
 
 
-def test_pickup_assign_by_id_preview_is_blocked_until_date_read_fixtures(monkeypatch, capsys):
+def test_pickup_assign_by_id_preview_uses_fixture_backed_assignment_read(monkeypatch, capsys):
     from tempus_cli import cli as cli_module
 
     monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakePickupApi())
 
-    assert main(["pickup", "--date", "2026-06-08", "--child", "Example Child", "--id", "123", "--json"]) == 0
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--id", "123", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data == {
         "mode": "preview",
         "operation": "assign",
-        "date": "2026-06-08",
-        "child": {"name": "Example Child", "id": None},
+        "date": "2026-06-11",
+        "child": {"name": "Example Child", "id": "101"},
         "contact": {"id": "123", "name": "Example Guardian", "phone": "0700000000"},
-        "existing_assignment": None,
-        "proposed_assignment": {"date": "2026-06-08", "child_id": None, "pickup_id": "123"},
+        "existing_assignment": {
+            "date": "2026-06-11",
+            "child_id": "101",
+            "pickup_id": "456",
+            "assignment_id": "901",
+            "version": "assignment-version-before",
+            "write_token_present": True,
+        },
+        "proposed_assignment": {
+            "date": "2026-06-11",
+            "child_id": "101",
+            "pickup_id": "123",
+            "assignment_id": "901",
+            "version": "assignment-version-before",
+            "write_token_present": True,
+        },
         "contact_write": None,
-        "assignment_write": {"required": True},
+        "assignment_write": {
+            "required": True,
+            "method": "assignPickupForDate",
+            "required_fields": ["date", "child_id", "pickup_id", "assignment_id", "version", "write_token"],
+        },
         "write_performed": False,
-        "would_write_if_applied": False,
-        "blocked": True,
-        "block_reason": "date_assignment_read_unavailable",
+        "would_write_if_applied": True,
+        "blocked": False,
+        "block_reason": None,
     }
 
 
@@ -354,10 +398,10 @@ def test_pickup_assign_by_name_requires_exact_unique_match(monkeypatch, capsys):
 
     monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakePickupApi())
 
-    assert main(["pickup", "--date", "2026-06-08", "--child", "Example Child", "--name", "Example Guardian", "--json"]) == 0
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--name", "Example Guardian", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["contact"]["id"] == "123"
-    assert data["blocked"] is True
+    assert data["blocked"] is False
 
 
 def test_pickup_assign_non_json_preview(monkeypatch, capsys):
@@ -365,11 +409,11 @@ def test_pickup_assign_non_json_preview(monkeypatch, capsys):
 
     monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakePickupApi())
 
-    assert main(["pickup", "--date", "2026-06-08", "--child", "Example Child", "--id", "123"]) == 0
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--id", "123"]) == 0
     captured = capsys.readouterr()
     assert "assign: preview" in captured.out
-    assert "proposed: {'date': '2026-06-08', 'child_id': None, 'pickup_id': '123'}" in captured.out
-    assert "blocked: date_assignment_read_unavailable" in captured.out
+    assert "'date': '2026-06-11'" in captured.out
+    assert "'pickup_id': '123'" in captured.out
 
 
 def test_pickup_assign_by_name_rejects_ambiguous_match(monkeypatch, capsys):
@@ -381,7 +425,7 @@ def test_pickup_assign_by_name_rejects_ambiguous_match(monkeypatch, capsys):
     ]
     monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakePickupApi(rows))
 
-    assert main(["pickup", "--date", "2026-06-08", "--child", "Example Child", "--name", "Example Guardian", "--json"]) == 2
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--name", "Example Guardian", "--json"]) == 2
     assert "matched multiple records; use --id" in capsys.readouterr().err
 
 
@@ -390,7 +434,7 @@ def test_pickup_assign_missing_named_contact_fails_until_contact_fixtures(monkey
 
     monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakePickupApi([]))
 
-    assert main(["pickup", "--date", "2026-06-08", "--child", "Example Child", "--name", "Example Guardian", "--json"]) == 2
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--name", "Example Guardian", "--json"]) == 2
     assert "contact creation requires sanitized Tempus write fixtures" in capsys.readouterr().err
 
 
@@ -411,7 +455,7 @@ def test_pickup_assign_requires_child_before_session(monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: calls.append(no_input))
 
-    assert main(["pickup", "--date", "2026-06-08", "--id", "123", "--json"]) == 2
+    assert main(["pickup", "--date", "2026-06-11", "--id", "123", "--json"]) == 2
     assert calls == []
     assert "--child must not be empty" in capsys.readouterr().err
 
@@ -422,7 +466,7 @@ def test_pickup_assign_requires_id_or_name_before_session(monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: calls.append(no_input))
 
-    assert main(["pickup", "--date", "2026-06-08", "--child", "Example Child", "--json"]) == 2
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--json"]) == 2
     assert calls == []
     assert "--date requires --id or --name" in capsys.readouterr().err
 
@@ -433,7 +477,7 @@ def test_pickup_assign_rejects_contact_update_flags_before_session(monkeypatch, 
     calls = []
     monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: calls.append(no_input))
 
-    assert main(["pickup", "--date", "2026-06-08", "--child", "Example Child", "--id", "123", "--phone", "0700000000"]) == 2
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--id", "123", "--phone", "0700000000"]) == 2
     assert calls == []
     assert "--date cannot be combined with --phone" in capsys.readouterr().err
 
@@ -444,7 +488,7 @@ def test_pickup_assign_rejects_remove_before_session(monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: calls.append(no_input))
 
-    assert main(["pickup", "--date", "2026-06-08", "--child", "Example Child", "--id", "123", "--remove"]) == 2
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--id", "123", "--remove"]) == 2
     assert calls == []
     assert "--date cannot be combined with --remove" in capsys.readouterr().err
 
@@ -455,31 +499,194 @@ def test_pickup_assign_rejects_id_and_name_before_session(monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: calls.append(no_input))
 
-    assert main(["pickup", "--date", "2026-06-08", "--child", "Example Child", "--id", "123", "--name", "Example Guardian"]) == 2
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--id", "123", "--name", "Example Guardian"]) == 2
     assert calls == []
     assert "--date requires either --id or --name, not both" in capsys.readouterr().err
 
 
-def test_pickup_assign_apply_is_gated_before_session(monkeypatch, capsys):
+def test_pickup_assign_apply_re_reads_writes_and_verifies(monkeypatch, capsys):
     from tempus_cli import cli as cli_module
 
-    calls = []
-    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: calls.append(no_input))
+    fake = FakePickupApi(
+        assignments=[
+            parse_pickup_assignment(_fixture("read_before.json")["response_body"]),
+            parse_pickup_assignment(_fixture("read_before.json")["response_body"]),
+            parse_pickup_assignment(_fixture("read_after.json")["response_body"]),
+        ]
+    )
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: fake)
 
-    assert main(["pickup", "--date", "2026-06-08", "--child", "Example Child", "--id", "123", "--apply", "--confirm"]) == 1
-    assert calls == []
-    assert "pickup writes require sanitized Tempus write fixtures" in capsys.readouterr().err
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--id", "123", "--apply", "--confirm", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["mode"] == "apply"
+    assert data["write_performed"] is True
+    assert data["verification"] == {"matched": True}
+    assert data["verified_assignment"]["pickup_id"] == "123"
+    assert fake.writes == [
+        {
+            "date": "2026-06-11",
+            "child_id": "101",
+            "pickup_id": "123",
+            "assignment_id": "901",
+            "version": "assignment-version-before",
+            "write_token": "assignment-write-token-before",
+        }
+    ]
 
 
-def test_pickup_assignment_api_stub_reports_read_unavailable():
-    from tempus_cli.api import TempusApi
+def test_pickup_assign_apply_noop_returns_exit_2(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
 
-    try:
-        TempusApi().pickup_assignment("2026-06-08", "Example Child")
-    except RuntimeError as exc:
-        assert "date assignment reads require sanitized Tempus fixtures" in str(exc)
-    else:
-        raise AssertionError("pickup_assignment should remain fixture-gated")
+    fake = FakePickupApi(assignments=[parse_pickup_assignment(_fixture("read_after.json")["response_body"])])
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: fake)
+
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--id", "123", "--apply", "--confirm", "--json"]) == 2
+    assert fake.writes == []
+    assert "already in requested state" in capsys.readouterr().err
+
+
+def test_pickup_assign_apply_refuses_stale_assignment(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    stale = parse_pickup_assignment(_fixture("read_before.json")["response_body"])
+    stale["version"] = "assignment-version-stale"
+    fake = FakePickupApi(
+        assignments=[
+            parse_pickup_assignment(_fixture("read_before.json")["response_body"]),
+            stale,
+        ]
+    )
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: fake)
+
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--id", "123", "--apply", "--confirm", "--json"]) == 2
+    assert fake.writes == []
+    assert "preview assumptions changed" in capsys.readouterr().err
+
+
+def test_pickup_assign_apply_verification_mismatch_returns_json_exit_1(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    fake = FakePickupApi(
+        assignments=[
+            parse_pickup_assignment(_fixture("read_before.json")["response_body"]),
+            parse_pickup_assignment(_fixture("read_before.json")["response_body"]),
+            parse_pickup_assignment(_fixture("verification_mismatch.json")["response_body"]),
+        ]
+    )
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: fake)
+
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--id", "123", "--apply", "--confirm", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["write_performed"] is True
+    assert data["verification"] == {"matched": False}
+    assert data["verified_assignment"]["pickup_id"] == "999"
+
+
+def test_pickup_assign_apply_verification_mismatch_checks_child_and_date(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    wrong_target = parse_pickup_assignment(_fixture("read_after.json")["response_body"])
+    wrong_target["date"] = "2026-06-12"
+    wrong_target["child_id"] = "999"
+    fake = FakePickupApi(
+        assignments=[
+            parse_pickup_assignment(_fixture("read_before.json")["response_body"]),
+            parse_pickup_assignment(_fixture("read_before.json")["response_body"]),
+            wrong_target,
+        ]
+    )
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: fake)
+
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--id", "123", "--apply", "--confirm", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["write_performed"] is True
+    assert data["verification"] == {"matched": False}
+    assert data["verified_assignment"]["date"] == "2026-06-12"
+    assert data["verified_assignment"]["child_id"] == "999"
+
+
+def test_pickup_assign_apply_post_write_read_failure_returns_partial_json(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    class FailingVerifyApi(FakePickupApi):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.assignment_reads = 0
+
+        def pickup_assignment(self, pickup_date, child_id):
+            self.assignment_reads += 1
+            if self.assignment_reads == 3:
+                raise RuntimeError("expired session")
+            return super().pickup_assignment(pickup_date, child_id)
+
+    fake = FailingVerifyApi(
+        assignments=[
+            parse_pickup_assignment(_fixture("read_before.json")["response_body"]),
+            parse_pickup_assignment(_fixture("read_before.json")["response_body"]),
+        ]
+    )
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: fake)
+
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--id", "123", "--apply", "--confirm", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["write_performed"] is True
+    assert data["verification"] == {"matched": False, "error": "expired session"}
+
+
+def test_pickup_assign_apply_post_write_network_failure_returns_partial_json(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    class FailingVerifyApi(FakePickupApi):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.assignment_reads = 0
+
+        def pickup_assignment(self, pickup_date, child_id):
+            self.assignment_reads += 1
+            if self.assignment_reads == 3:
+                raise requests.ReadTimeout("slow verification")
+            return super().pickup_assignment(pickup_date, child_id)
+
+    fake = FailingVerifyApi(
+        assignments=[
+            parse_pickup_assignment(_fixture("read_before.json")["response_body"]),
+            parse_pickup_assignment(_fixture("read_before.json")["response_body"]),
+        ]
+    )
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: fake)
+
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--id", "123", "--apply", "--confirm", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["write_performed"] is True
+    assert data["verification"] == {"matched": False, "error": "slow verification"}
+
+
+def test_pickup_assign_requires_fixture_proven_child_id(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    rows = [{"id": "123", "name": "Example Guardian", "phone": "0700000000", "children": ["Example Child"], "_raw": {}}]
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakePickupApi(rows))
+
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--id", "123", "--json"]) == 2
+    assert "fixture-proven server ID" in capsys.readouterr().err
+
+
+def test_pickup_assign_rejects_ambiguous_child_id(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    rows = [
+        {
+            "id": "123",
+            "name": "Example Guardian",
+            "phone": "0700000000",
+            "children": ["Example Child"],
+            "_raw": {"children": [{"id": 101, "name": "Example Child"}, {"id": 102, "name": "Example Child"}]},
+        }
+    ]
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakePickupApi(rows))
+
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--id", "123", "--json"]) == 2
+    assert "matched multiple server IDs" in capsys.readouterr().err
 
 
 def test_pickup_missing_confirm_fails_before_session(monkeypatch, capsys):
@@ -499,9 +706,9 @@ def test_pickup_apply_is_gated_before_session(monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: calls.append(no_input))
 
-    assert main(["pickup", "--child", "Example Child", "--name", "Example Guardian", "--phone", "0700000000", "--apply", "--confirm"]) == 1
+    assert main(["pickup", "--child", "Example Child", "--name", "Example Guardian", "--phone", "0700000000", "--apply", "--confirm"]) == 2
     assert calls == []
-    assert "pickup writes require sanitized Tempus write fixtures" in capsys.readouterr().err
+    assert "pickup contact writes require sanitized Tempus write fixtures" in capsys.readouterr().err
 
 
 def test_pickup_target_not_found(monkeypatch, capsys):
@@ -509,5 +716,5 @@ def test_pickup_target_not_found(monkeypatch, capsys):
 
     monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakePickupApi([]))
 
-    assert main(["pickup", "--id", "123", "--phone", "0711111111", "--json"]) == 1
+    assert main(["pickup", "--id", "123", "--phone", "0711111111", "--json"]) == 2
     assert "pickup contact 123 not found" in capsys.readouterr().err

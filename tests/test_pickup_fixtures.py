@@ -74,8 +74,8 @@ def test_sanitized_fixture_guard_fails_when_sensitive_value_remains():
         assert_sanitized_fixture({"raw": "raw capture still has 201001010101"})
 
 
-def test_fixture_based_assignment_payload_work_remains_gated():
-    from tempus_cli.api import PICKUP_WRITES_DISABLED, TempusApi
+def test_fixture_based_contact_write_work_remains_gated():
+    from tempus_cli.api import PICKUP_CONTACT_WRITES_DISABLED, TempusApi
     from tempus_cli.errors import SafetyError
     from tempus_cli.transport import ReadOnlyTempusTransport
 
@@ -83,12 +83,12 @@ def test_fixture_based_assignment_payload_work_remains_gated():
         def post(self, *args, **kwargs):
             raise AssertionError("write request should not be sent")
 
-    with pytest.raises(RuntimeError, match=PICKUP_WRITES_DISABLED):
-        TempusApi().assign_pickup("2026-06-08", "child-1", "123")
+    with pytest.raises(RuntimeError, match=PICKUP_CONTACT_WRITES_DISABLED):
+        TempusApi().create_pickup("Generated Pickup", "0700000000", ["Generated Child"])
 
     transport = ReadOnlyTempusTransport(FakeSession())
     with pytest.raises(SafetyError, match="non-pickup"):
-        transport.post_pickup_write_rpc(GWT_SERVICE_URL, _payload("assignPickupForDate"))
+        transport.post_pickup_write_rpc(GWT_SERVICE_URL, _payload("removePickup"))
 
 
 def test_assert_sanitized_fixture_accepts_generated_placeholders():

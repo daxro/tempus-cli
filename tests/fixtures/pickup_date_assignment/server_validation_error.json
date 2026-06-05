@@ -1,0 +1,7 @@
+{
+  "fixture_type": "tempus_pickup_date_assignment_capture",
+  "gwt_rpc_method": "assignPickupForDate",
+  "response_body": "//OK[{\"success\":false,\"errorCode\":\"VALIDATION\",\"message\":\"Pickup is not allowed for child\"}]",
+  "scope": "pickup_date_assignment",
+  "version": 1
+}

@@ -1,0 +1,7 @@
+{
+  "fixture_type": "tempus_pickup_date_assignment_capture",
+  "gwt_rpc_method": "getPickupDateAssignment",
+  "response_body": "//OK[{\"assignment\":{\"date\":\"2026-06-11\",\"childId\":101,\"childName\":\"Generated Child\",\"pickupId\":999,\"pickupName\":\"Generated Pickup Other\",\"assignmentId\":901,\"version\":\"assignment-version-after\",\"writeToken\":\"assignment-write-token-after\"}}]",
+  "scope": "pickup_date_assignment",
+  "version": 1
+}

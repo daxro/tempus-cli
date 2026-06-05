@@ -1,0 +1,7 @@
+{
+  "fixture_type": "tempus_pickup_date_assignment_capture",
+  "gwt_rpc_method": "getPickupDateAssignment",
+  "response_body": "<html>login expired</html>",
+  "scope": "pickup_date_assignment",
+  "version": 1
+}

@@ -1,10 +1,16 @@
 import pytest
+import json
+from pathlib import Path
 
 from tempus_cli.gwt import (
+    parse_assignment_write_response,
     parse_identity_providers,
+    parse_pickup_assignment,
     parse_pickups,
     parse_schemas,
+    payload_assign_pickup_for_date,
     payload_authenticate_user_with_cookies,
+    payload_get_pickup_date_assignment,
     payload_get_grand_id_identity_providers,
     payload_get_pickups,
     payload_get_schemas,
@@ -14,6 +20,15 @@ from tempus_cli.gwt import (
 
 SCHEMAS = '//OK[14,938,13,2,12,727,11,2,10,399,9,2,8,275,7,2,6,23,5,2,4,20,3,2,6,1,["java.util.ArrayList/4159755760","se.tempus.common.shared.wrapper.Schema/2582274289","Sandsborgs Montessori","tempus-sandsborgsm","Miro Kids","tempus-stockholm-miro-kids","Katarina Barnstugeförening","tempus-stockholm-katarina","Stockholms stad","tempus-stockholm","Framtidsfolket Cosmos","tempus-stockholm-framtidsfolket","Stockholms stad OB","tempus-stockholm-ob"],0,7]'
 PROVIDERS = '//OK[0,3,5,4,3,0,2,1,1,["java.util.ArrayList/4159755760","se.tempus.common.shared.grandid.SelectableGrandIdIdp/2371313207","Stockholm-inlogg","se.tempus.common.shared.login.LoginOption/2533300465","STOCKHOLM_PROD"],0,7]'
+FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pickup_date_assignment"
+
+
+def _fixture(name):
+    return json.loads((FIXTURE_DIR / name).read_text(encoding="utf-8"))
+
+
+def _normalize_permutation(payload):
+    return payload.replace("|P|", "|PERMUTATION|")
 
 
 def test_payloads_match_observed_shape():
@@ -31,6 +46,47 @@ def test_authenticate_user_with_cookies_payload_matches_observed_shape():
         "1|2|3|4|2|5|5|0|0|"
     )
     assert payload_authenticate_user_with_cookies("P", use_nu_cookie=True, use_bearer_auth=True).endswith("|1|1|")
+
+
+def test_assignment_read_payload_matches_fixture_bytes():
+    fixture = _fixture("read_before.json")
+    payload = payload_get_pickup_date_assignment("P", "2026-06-11", 101)
+    assert _normalize_permutation(payload) == fixture["request_payload"]
+
+
+def test_assignment_write_payload_matches_fixture_bytes():
+    fixture = _fixture("write_assignment.json")
+    payload = payload_assign_pickup_for_date(
+        "P",
+        {
+            "date": "2026-06-11",
+            "child_id": "101",
+            "pickup_id": "123",
+            "assignment_id": "901",
+            "version": "assignment-version-before",
+            "write_token": "assignment-write-token-before",
+        },
+    )
+    assert _normalize_permutation(payload) == fixture["request_payload"]
+
+
+def test_assignment_fixture_documents_method_arguments_and_fields():
+    read_fixture = _fixture("read_before.json")
+    write_fixture = _fixture("write_assignment.json")
+    assert read_fixture["gwt_rpc_method"] == "getPickupDateAssignment"
+    assert read_fixture["argument_order"] == ["date", "child_id"]
+    assert read_fixture["date_representation"] == "YYYY-MM-DD string"
+    assert read_fixture["child_id_source"] == "pickup child row id from getPickups response"
+    assert write_fixture["gwt_rpc_method"] == "assignPickupForDate"
+    assert write_fixture["argument_order"] == [
+        "date",
+        "child_id",
+        "pickup_id",
+        "assignment_id",
+        "version",
+        "write_token",
+    ]
+    assert write_fixture["required_write_fields"] == write_fixture["argument_order"]
 
 
 def test_parse_schemas():
@@ -144,3 +200,38 @@ def test_parse_pickups_fails_closed_for_non_ok_response():
 def test_parse_pickups_fails_closed_for_unrecognized_gwt_shape():
     with pytest.raises(RuntimeError, match="recognized pickup data"):
         parse_pickups('//OK[1,2,["java.util.ArrayList/4159755760"],0,7]')
+
+
+def test_parse_assignment_read_before_fixture():
+    fixture = _fixture("read_before.json")
+    assert parse_pickup_assignment(fixture["response_body"]) == {
+        "date": "2026-06-11",
+        "child_id": "101",
+        "child_name": "Generated Child",
+        "pickup_id": "456",
+        "pickup_name": "Generated Pickup Before",
+        "assignment_id": "901",
+        "version": "assignment-version-before",
+        "write_token": "assignment-write-token-before",
+    }
+
+
+def test_parse_assignment_write_success_fixture():
+    fixture = _fixture("write_assignment.json")
+    assert parse_assignment_write_response(fixture["response_body"]) == {
+        "success": True,
+        "assignment_id": "901",
+        "version": "assignment-version-after",
+    }
+
+
+def test_parse_assignment_write_validation_error_fixture():
+    fixture = _fixture("server_validation_error.json")
+    with pytest.raises(RuntimeError, match="VALIDATION"):
+        parse_assignment_write_response(fixture["response_body"])
+
+
+def test_parse_assignment_malformed_or_expired_session_fixture():
+    fixture = _fixture("malformed_non_ok.json")
+    with pytest.raises(RuntimeError, match="not a successful"):
+        parse_pickup_assignment(fixture["response_body"])

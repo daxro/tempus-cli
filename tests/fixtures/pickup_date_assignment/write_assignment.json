@@ -1,0 +1,12 @@
+{
+  "argument_order": ["date", "child_id", "pickup_id", "assignment_id", "version", "write_token"],
+  "argument_types": ["java.lang.String/2004016611", "I", "I", "I", "java.lang.String/2004016611", "java.lang.String/2004016611"],
+  "date_representation": "YYYY-MM-DD string",
+  "fixture_type": "tempus_pickup_date_assignment_capture",
+  "gwt_rpc_method": "assignPickupForDate",
+  "request_payload": "7|0|6|https://home.tempusinfo.se/tempusHome/tempusHome/|PERMUTATION|se.limesaudio.tempushome.client.HomeService|assignPickupForDate|java.lang.String/2004016611|I|1|2|3|4|6|5|6|6|6|5|5|2026-06-11|101|123|901|assignment-version-before|assignment-write-token-before|",
+  "required_write_fields": ["date", "child_id", "pickup_id", "assignment_id", "version", "write_token"],
+  "response_body": "//OK[{\"success\":true,\"assignmentId\":901,\"version\":\"assignment-version-after\"}]",
+  "scope": "pickup_date_assignment",
+  "version": 1
+}

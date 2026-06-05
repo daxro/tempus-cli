@@ -8,7 +8,7 @@ import sys
 import requests
 
 from . import __version__
-from .api import PICKUP_WRITES_DISABLED, TempusApi
+from .api import PICKUP_CONTACT_WRITES_DISABLED, TempusApi
 from .errors import FrejaError, TempusError
 from .paths import default_config_path, default_session_path
 from .redact import redact_text
@@ -126,6 +126,14 @@ def _print_json(value):
     print(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
 
 
+def _public_result(value):
+    if isinstance(value, dict):
+        return {key: _public_result(item) for key, item in value.items() if not key.startswith("_")}
+    if isinstance(value, list):
+        return [_public_result(item) for item in value]
+    return value
+
+
 def _write_config_personnummer(personnummer, path=None):
     path = path or default_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -177,6 +185,19 @@ def _public_pickup(pickup):
         "name": pickup.get("name"),
         "phone": pickup.get("phone"),
         "children": list(pickup.get("children") or []),
+    }
+
+
+def _public_assignment(assignment):
+    if assignment is None:
+        return None
+    return {
+        "date": assignment.get("date"),
+        "child_id": assignment.get("child_id"),
+        "pickup_id": assignment.get("pickup_id"),
+        "assignment_id": assignment.get("assignment_id"),
+        "version": assignment.get("version"),
+        "write_token_present": bool(assignment.get("write_token")),
     }
 
 
@@ -289,9 +310,9 @@ def _validate_pickup_args(args):
 def _find_pickup(pickups, pickup_id):
     matches = [pickup for pickup in pickups if str(pickup.get("id")) == str(pickup_id)]
     if not matches:
-        raise RuntimeError(f"pickup contact {pickup_id} not found")
+        raise ValueError(f"pickup contact {pickup_id} not found")
     if len(matches) > 1:
-        raise RuntimeError(f"pickup contact {pickup_id} matched multiple records")
+        raise ValueError(f"pickup contact {pickup_id} matched multiple records")
     return matches[0]
 
 
@@ -307,39 +328,89 @@ def _find_pickup_by_name(pickups, name):
     return matches[0]
 
 
-def _assignment_preview(args, pickups):
+def _child_rows_from_raw(raw):
+    values = []
+    if not isinstance(raw, dict):
+        return values
+    for key in ("children", "child", "homeChildren"):
+        child_value = raw.get(key)
+        if isinstance(child_value, dict):
+            values.append(child_value)
+        elif isinstance(child_value, list):
+            values.extend(item for item in child_value if isinstance(item, dict))
+    return values
+
+
+def _resolve_child_id(pickups, child_name):
+    wanted = _validate_non_empty(child_name, "--child")
+    matches = set()
+    for pickup in pickups:
+        raw = pickup.get("_raw") or {}
+        for child in _child_rows_from_raw(raw):
+            name = child.get("name") or child.get("displayName") or child.get("fullName")
+            child_id = child.get("id") or child.get("childId") or child.get("homeChildId")
+            if str(name or "").strip() == wanted and child_id is not None:
+                matches.add(str(child_id))
+    if not matches:
+        raise ValueError(f"child '{wanted}' did not resolve to a fixture-proven server ID")
+    if len(matches) > 1:
+        raise ValueError(f"child '{wanted}' matched multiple server IDs")
+    return next(iter(matches))
+
+
+def _assignment_write_fields(assignment, pickup_id):
+    return {
+        "date": assignment["date"],
+        "child_id": assignment["child_id"],
+        "pickup_id": str(pickup_id),
+        "assignment_id": assignment["assignment_id"],
+        "version": assignment["version"],
+        "write_token": assignment["write_token"],
+    }
+
+
+def _assignment_preview(args, pickups, api):
     pickup = _find_pickup(pickups, args.pickup_id) if args.pickup_id else _find_pickup_by_name(pickups, args.name)
     contact = _public_pickup(pickup)
     child_name = _validate_non_empty(args.child, "--child")
+    child_id = _resolve_child_id(pickups, child_name)
     pickup_date = _validate_pickup_date(args.date)
+    assignment = api.pickup_assignment(pickup_date, child_id)
+    if assignment.get("date") != pickup_date or assignment.get("child_id") != child_id:
+        raise ValueError("pickup assignment read did not match requested child/date")
+    existing = _public_assignment(assignment)
+    proposed = dict(existing)
+    proposed["pickup_id"] = contact.get("id")
+    changed = existing.get("pickup_id") != contact.get("id")
     return {
         "mode": "preview",
         "operation": "assign",
         "date": pickup_date,
-        "child": {"name": child_name, "id": None},
+        "child": {"name": child_name, "id": child_id},
         "contact": {
             "id": contact.get("id"),
             "name": contact.get("name"),
             "phone": contact.get("phone"),
         },
-        "existing_assignment": None,
-        "proposed_assignment": {
-            "date": pickup_date,
-            "child_id": None,
-            "pickup_id": contact.get("id"),
-        },
+        "existing_assignment": existing,
+        "proposed_assignment": proposed,
         "contact_write": None,
-        "assignment_write": {"required": True},
+        "assignment_write": {
+            "required": True,
+            "method": "assignPickupForDate",
+            "required_fields": ["date", "child_id", "pickup_id", "assignment_id", "version", "write_token"],
+        },
+        "_assignment_state": assignment,
         "write_performed": False,
-        "would_write_if_applied": False,
-        "blocked": True,
-        "block_reason": "date_assignment_read_unavailable",
+        "would_write_if_applied": changed,
+        "blocked": False,
+        "block_reason": "no_op" if not changed else None,
     }
 
 
-def _pickup_preview(operation, args, pickups):
+def _pickup_preview(operation, args, pickups, api=None):
     if operation == "assign":
-        return _assignment_preview(args, pickups)
+        return _assignment_preview(args, pickups, api)
 
     if operation == "create":
         proposed = {
@@ -393,10 +464,69 @@ def _pickup_preview(operation, args, pickups):
     }
 
 
+def _preview_assumptions(preview):
+    assignment = preview["_assignment_state"]
+    return {
+        "contact_id": preview["contact"]["id"],
+        "child_id": preview["child"]["id"],
+        "existing_assignment": {
+            "date": assignment["date"],
+            "child_id": assignment["child_id"],
+            "pickup_id": assignment["pickup_id"],
+            "assignment_id": assignment["assignment_id"],
+            "version": assignment["version"],
+            "write_token": assignment["write_token"],
+        },
+    }
+
+
+def _apply_assignment(args, api, preview):
+    if preview.get("blocked"):
+        raise ValueError(f"pickup assignment is blocked: {preview.get('block_reason')}")
+    if not preview.get("would_write_if_applied"):
+        raise ValueError("pickup assignment is already in requested state")
+
+    before = _preview_assumptions(preview)
+    reread_pickups = api.pickups()
+    reread = _assignment_preview(args, reread_pickups, api)
+    after_reread = _preview_assumptions(reread)
+    if after_reread != before:
+        raise ValueError("pickup assignment preview assumptions changed; re-run preview")
+
+    write_payload = _assignment_write_fields(reread["_assignment_state"], reread["contact"]["id"])
+    write_result = api.assign_pickup(write_payload)
+    result = dict(reread)
+    result["mode"] = "apply"
+    result["write_performed"] = True
+    result["write_result"] = write_result
+    try:
+        verified = api.pickup_assignment(reread["date"], reread["child"]["id"])
+    except (TempusError, RuntimeError, OSError, requests.exceptions.RequestException) as exc:
+        result["verification"] = {"matched": False, "error": str(exc)}
+        return 1, result
+
+    verified_public = _public_assignment(verified)
+    result["verified_assignment"] = verified_public
+    matched = (
+        verified_public.get("date") == reread["date"]
+        and verified_public.get("child_id") == reread["child"]["id"]
+        and verified_public.get("pickup_id") == reread["contact"]["id"]
+    )
+    result["verification"] = {"matched": matched}
+    if not matched:
+        return 1, result
+    result["existing_assignment"] = verified_public
+    result["proposed_assignment"] = verified_public
+    result["would_write_if_applied"] = False
+    result["blocked"] = False
+    result["block_reason"] = None
+    return 0, result
+
+
 def _pickup(args):
     operation = _validate_pickup_args(args)
-    if args.apply:
-        raise RuntimeError(PICKUP_WRITES_DISABLED)
+    if args.apply and operation != "assign":
+        raise ValueError(PICKUP_CONTACT_WRITES_DISABLED)
 
     api = _get_authenticated_api(no_input=args.no_input)
     pickups = api.pickups()
@@ -410,20 +540,27 @@ def _pickup(args):
             _print_pickups(rows)
         return 0
 
-    preview = _pickup_preview(operation, args, pickups)
+    preview = _pickup_preview(operation, args, pickups, api=api)
+    exit_code = 0
+    if args.apply:
+        exit_code, preview = _apply_assignment(args, api, preview)
     if args.json_output:
-        _print_json(preview)
+        _print_json(_public_result(preview))
     else:
-        print(f"{operation}: preview")
+        print(f"{operation}: {preview['mode']}")
         if preview.get("existing_pickup"):
             print(f"existing: {preview['existing_pickup']}")
         if preview.get("proposed_pickup"):
             print(f"proposed: {preview['proposed_pickup']}")
+        if preview.get("existing_assignment"):
+            print(f"existing: {preview['existing_assignment']}")
         if preview.get("proposed_assignment"):
             print(f"proposed: {preview['proposed_assignment']}")
+        if preview.get("verification"):
+            print(f"verification: {preview['verification']}")
         if preview.get("blocked"):
             print(f"blocked: {preview.get('block_reason')}")
-    return 0
+    return exit_code
 
 
 def _setup(args):
