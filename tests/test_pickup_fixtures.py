@@ -5,6 +5,7 @@ import pytest
 from tempus_cli.gwt import GWT_MODULE_BASE, GWT_SERVICE_URL, HOME_SERVICE
 from tempus_cli.pickup_fixtures import (
     assert_sanitized_fixture,
+    main,
     write_sanitized_fixture,
 )
 
@@ -98,3 +99,36 @@ def test_assert_sanitized_fixture_accepts_generated_placeholders():
             "entries": [{"raw": "Example Child Example Guardian [REDACTED_TOKEN]"}],
         }
     )
+
+
+def test_fixture_cli_requires_replacements(tmp_path):
+    raw = tmp_path / "capture.har"
+    raw.write_text("{}", encoding="utf-8")
+    output = tmp_path / "fixture.json"
+
+    with pytest.raises(SystemExit):
+        main(["--input", str(raw), "--output", str(output)])
+
+
+def test_fixture_cli_rejects_repo_input(tmp_path):
+    replacements = tmp_path / "replacements.json"
+    replacements.write_text('{"Generated Child":"Example Child"}', encoding="utf-8")
+    output = tmp_path / "fixture.json"
+
+    with pytest.raises(ValueError, match="--input must be outside the repository"):
+        main(["--input", __file__, "--replacements", str(replacements), "--output", str(output)])
+
+
+def test_fixture_cli_writes_sanitized_output_from_external_sources(tmp_path):
+    raw = tmp_path / "capture.har"
+    raw.write_text("Generated Child 201001010101", encoding="utf-8")
+    replacements = tmp_path / "replacements.json"
+    replacements.write_text('{"Generated Child":"Example Child"}', encoding="utf-8")
+    output = tmp_path / "fixture.json"
+
+    assert main(["--input", str(raw), "--replacements", str(replacements), "--output", str(output)]) == 0
+
+    text = output.read_text(encoding="utf-8")
+    assert "Generated Child" not in text
+    assert "201001010101" not in text
+    assert "Example Child" in text

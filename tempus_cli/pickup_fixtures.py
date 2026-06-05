@@ -24,6 +24,17 @@ SENSITIVE_RE = re.compile(
 )
 
 
+def _repo_root():
+    return Path(__file__).resolve().parents[1]
+
+
+def _reject_repo_source(path, label):
+    resolved = Path(path).resolve()
+    if resolved.is_relative_to(_repo_root()):
+        raise ValueError(f"{label} must be outside the repository")
+    return resolved
+
+
 def _load_json(text):
     try:
         return json.loads(text)
@@ -159,14 +170,16 @@ def build_parser():
     parser = argparse.ArgumentParser(description="Sanitize Tempus pickup date-assignment capture data.")
     parser.add_argument("--input", required=True, help="Raw capture file outside the repository")
     parser.add_argument("--output", required=True, help=f"Sanitized fixture path, usually under {DEFAULT_OUTPUT_DIR}")
-    parser.add_argument("--replacements", help="JSON file mapping real names to generated placeholders")
+    parser.add_argument("--replacements", required=True, help="JSON file outside the repository mapping real names to generated placeholders")
     return parser
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    raw_text = Path(args.input).read_text(encoding="utf-8")
-    replacements = _load_replacements(args.replacements)
+    input_path = _reject_repo_source(args.input, "--input")
+    replacements_path = _reject_repo_source(args.replacements, "--replacements")
+    raw_text = input_path.read_text(encoding="utf-8")
+    replacements = _load_replacements(replacements_path)
     write_sanitized_fixture(raw_text, args.output, replacements=replacements)
     print(f"wrote sanitized fixture: {args.output}")
     return 0
