@@ -1,0 +1,13 @@
+{
+  "argument_order": ["child_id", "date", "day_schedule"],
+  "argument_types": ["I", "se.tempus.common.date.DateOnly/4090038506", "se.tempus.common.shared.wrapper.DaySchedule/3784037161"],
+  "child_id_source": "getChildrenAndNotifications Child wrapper id",
+  "date_representation": "DateOnly as day, month, full year",
+  "fixture_type": "tempus_pickup_date_assignment_capture",
+  "gwt_rpc_method": "updateSchedule",
+  "request_payload": "7|0|16|https://home.tempusinfo.se/tempusHome/tempusHome/|PERMUTATION|se.limesaudio.tempushome.client.HomeService|updateSchedule|I|se.tempus.common.date.DateOnly/4090038506|se.tempus.common.shared.wrapper.DaySchedule/3784037161|se.tempus.common.shared.wrapper.Pickup/873253356|java.util.ArrayList/4159755760|java.lang.Integer/3438268394|Generated Owner|Generated Pickup|0700000000|java.util.TreeSet/4043497002|se.tempus.common.shared.wrapper.Schedulation/1710330904|se.tempus.common.date.TimeOnly/1619208844|1|2|3|4|3|5|6|7|101|6|11|6|2026|7|0|0|0|0|8|9|2|10|101|10|102|10|103|11|123|12|13|0|0|14|0|1|15|0|901|16|28800000|16|59400000|",
+  "required_write_fields": ["date", "child_id", "pickup_id", "pickup_name", "pickup_phone", "owner_name", "pickup_child_ids", "schedule_id", "start_ms", "end_ms"],
+  "response_body": "//OK[59400000,11,28800000,11,901,0,10,1,0,9,0,0,8,7,123,6,102,5,103,5,101,5,2,4,3,879358000,\"Generated Timestamp\",2,0,0,0,1,0,7,[\"se.tempus.common.shared.wrapper.DaySchedule/3784037161\",\"java.sql.Timestamp/3040052672\",\"se.tempus.common.shared.wrapper.Pickup/873253356\",\"java.util.ArrayList/4159755760\",\"java.lang.Integer/3438268394\",\"Generated Owner\",\"Generated Pickup\",\"0700000000\",\"java.util.TreeSet/4043497002\",\"se.tempus.common.shared.wrapper.Schedulation/1710330904\",\"se.tempus.common.date.TimeOnly/1619208844\"],0,7]",
+  "scope": "pickup_date_assignment",
+  "version": 1
+}

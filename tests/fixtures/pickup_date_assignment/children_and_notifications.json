@@ -1,0 +1,11 @@
+{
+  "argument_order": [],
+  "argument_types": [],
+  "child_id_source": "getChildrenAndNotifications Child wrapper id",
+  "fixture_type": "tempus_pickup_date_assignment_capture",
+  "gwt_rpc_method": "getChildrenAndNotifications",
+  "request_payload": "7|0|4|https://home.tempusinfo.se/tempusHome/tempusHome/|PERMUTATION|se.limesaudio.tempushome.client.HomeService|getChildrenAndNotifications|1|2|3|4|0|",
+  "response_body": "//OK[0,10,103,-22,176,0,102,8,7,103,-15,174,0,101,8,7,103,1,9,173,0,101,8,7,103,-9,171,0,102,8,7,103,-12,169,0,101,8,7,103,3,9,175,0,102,8,7,103,0,9,172,0,102,8,7,103,2,9,170,0,101,8,7,8,2,0,2,6,0,0,101,5,0,0,4,3,1,2,1,[\"se.tempus.common.shared.wrapper.ParentNotificationSettings/[SANITIZED]\",\"java.util.ArrayList/[SANITIZED]\",\"se.tempus.common.shared.wrapper.Child/[SANITIZED]\",\"java.util.TreeSet/[SANITIZED]\",\"Generated Child\",\"Generated Value\",\"se.tempus.common.shared.wrapper.DisabledNotification/[SANITIZED]\",\"java.lang.Integer/[SANITIZED]\",\"se.tempus.common.shared.wrapper.enums.NotificationType/[SANITIZED]\",\"java.util.HashMap/[SANITIZED]\"],0,7]",
+  "scope": "pickup_date_assignment",
+  "version": 1
+}

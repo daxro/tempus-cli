@@ -4,18 +4,23 @@ from pathlib import Path
 
 from tempus_cli.gwt import (
     parse_assignment_write_response,
+    parse_children_and_notifications,
     parse_identity_providers,
     parse_pickup_assignment,
     parse_pickups,
     parse_schemas,
+    parse_week_schedule_assignment,
     payload_assign_pickup_for_date,
     payload_authenticate_user_with_cookies,
+    payload_get_children_and_notifications,
     payload_get_pickup_date_assignment,
     payload_get_grand_id_identity_providers,
     payload_get_pickups,
     payload_get_schemas,
+    payload_get_week_schedules,
     payload_heartbeat,
     payload_remove_pickup,
+    payload_update_schedule_assignment,
 )
 
 SCHEMAS = '//OK[14,938,13,2,12,727,11,2,10,399,9,2,8,275,7,2,6,23,5,2,4,20,3,2,6,1,["java.util.ArrayList/4159755760","se.tempus.common.shared.wrapper.Schema/2582274289","Sandsborgs Montessori","tempus-sandsborgsm","Miro Kids","tempus-stockholm-miro-kids","Katarina Barnstugeförening","tempus-stockholm-katarina","Stockholms stad","tempus-stockholm","Framtidsfolket Cosmos","tempus-stockholm-framtidsfolket","Stockholms stad OB","tempus-stockholm-ob"],0,7]'
@@ -54,17 +59,33 @@ def test_assignment_read_payload_matches_fixture_bytes():
     assert _normalize_permutation(payload) == fixture["request_payload"]
 
 
+def test_children_and_notifications_payload_matches_fixture_bytes():
+    fixture = _fixture("children_and_notifications.json")
+    payload = payload_get_children_and_notifications("P")
+    assert _normalize_permutation(payload) == fixture["request_payload"]
+
+
+def test_week_schedules_payload_matches_fixture_bytes():
+    fixture = _fixture("week_schedules.json")
+    payload = payload_get_week_schedules("P", [(2026, 24)])
+    assert _normalize_permutation(payload) == fixture["request_payload"]
+
+
 def test_assignment_write_payload_matches_fixture_bytes():
-    fixture = _fixture("write_assignment.json")
-    payload = payload_assign_pickup_for_date(
+    fixture = _fixture("update_schedule_assignment.json")
+    payload = payload_update_schedule_assignment(
         "P",
         {
             "date": "2026-06-11",
             "child_id": "101",
             "pickup_id": "123",
-            "assignment_id": "901",
-            "version": "assignment-version-before",
-            "write_token": "assignment-write-token-before",
+            "pickup_name": "Generated Pickup",
+            "pickup_phone": "0700000000",
+            "owner_name": "Generated Owner",
+            "pickup_child_ids": ["101", "102", "103"],
+            "schedule_id": "901",
+            "start_ms": "28800000",
+            "end_ms": "59400000",
         },
     )
     assert _normalize_permutation(payload) == fixture["request_payload"]
@@ -72,21 +93,21 @@ def test_assignment_write_payload_matches_fixture_bytes():
 
 def test_assignment_fixture_documents_method_arguments_and_fields():
     read_fixture = _fixture("read_before.json")
-    write_fixture = _fixture("write_assignment.json")
+    write_fixture = _fixture("update_schedule_assignment.json")
+    schedule_fixture = _fixture("week_schedules.json")
     assert read_fixture["gwt_rpc_method"] == "getPickupDateAssignment"
     assert read_fixture["argument_order"] == ["date", "child_id"]
     assert read_fixture["date_representation"] == "YYYY-MM-DD string"
     assert read_fixture["child_id_source"] == "pickup child row id from getPickups response"
-    assert write_fixture["gwt_rpc_method"] == "assignPickupForDate"
+    assert schedule_fixture["gwt_rpc_method"] == "getWeekSchedules"
+    assert schedule_fixture["argument_order"] == ["weeks"]
+    assert write_fixture["gwt_rpc_method"] == "updateSchedule"
     assert write_fixture["argument_order"] == [
-        "date",
         "child_id",
-        "pickup_id",
-        "assignment_id",
-        "version",
-        "write_token",
+        "date",
+        "day_schedule",
     ]
-    assert write_fixture["required_write_fields"] == write_fixture["argument_order"]
+    assert "schedule_id" in write_fixture["required_write_fields"]
 
 
 def test_parse_schemas():
@@ -176,21 +197,25 @@ def test_parse_pickups_from_encoded_tree_set_fixture():
             "name": "Example Guardian A",
             "phone": None,
             "children": ["Example Child A"],
-            "_raw": {
-                "encoded": [10, 6, 123, 5, 456, 4, 789, 4, 1, 3, 2],
-                "children": [{"name": "Example Child A", "id": "456"}],
+                "_raw": {
+                    "encoded": [10, 6, 123, 5, 456, 4, 789, 4, 1, 3, 2],
+                    "children": [{"name": "Example Child A", "id": "456"}],
+                    "owner_name": "Example Child A",
+                    "pickup_child_ids": ["456", "789"],
+                },
             },
-        },
         {
             "id": "124",
             "name": "Example Guardian B",
             "phone": "0700000000",
             "children": ["Example Child B"],
-            "_raw": {
-                "encoded": [9, 8, 124, 7, 457, 4, 789, 4, 1, 3, 2],
-                "children": [{"name": "Example Child B", "id": "457"}],
+                "_raw": {
+                    "encoded": [9, 8, 124, 7, 457, 4, 789, 4, 1, 3, 2],
+                    "children": [{"name": "Example Child B", "id": "457"}],
+                    "owner_name": "Example Child B",
+                    "pickup_child_ids": ["457", "789"],
+                },
             },
-        },
     ]
 
 
@@ -222,12 +247,45 @@ def test_parse_assignment_read_before_fixture():
     }
 
 
+def test_parse_children_and_notifications_fixture():
+    fixture = _fixture("children_and_notifications.json")
+    assert parse_children_and_notifications(fixture["response_body"]) == [
+        {"id": "101", "name": "Generated Child"}
+    ]
+
+
+def test_parse_children_and_notifications_fails_closed_for_non_ok_response():
+    with pytest.raises(RuntimeError, match="not a successful"):
+        parse_children_and_notifications("<html>login</html>")
+
+
+def test_parse_week_schedule_assignment_fixture():
+    fixture = _fixture("week_schedules.json")
+    assert parse_week_schedule_assignment(fixture["response_body"], "2026-06-11", "101") == {
+        "date": "2026-06-11",
+        "child_id": "101",
+        "pickup_id": None,
+        "assignment_id": None,
+        "version": None,
+        "write_token": None,
+        "write_supported": True,
+        "block_reason": None,
+        "schedule_id": "901",
+        "start_ms": "28800000",
+        "end_ms": "59400000",
+    }
+
+
+def test_parse_week_schedule_assignment_requires_requested_child():
+    fixture = _fixture("week_schedules.json")
+    with pytest.raises(RuntimeError, match="requested child/date"):
+        parse_week_schedule_assignment(fixture["response_body"], "2026-06-11", "999")
+
+
 def test_parse_assignment_write_success_fixture():
-    fixture = _fixture("write_assignment.json")
+    fixture = _fixture("update_schedule_assignment.json")
     assert parse_assignment_write_response(fixture["response_body"]) == {
         "success": True,
-        "assignment_id": "901",
-        "version": "assignment-version-after",
     }
 
 

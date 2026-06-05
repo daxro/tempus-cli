@@ -42,8 +42,8 @@ def test_pickup_assignment_authenticates_then_reads(monkeypatch):
             if calls[-1] == "authenticateUserWithCookies":
                 return DummyResponse("//OK[]")
             return DummyResponse(
-                '//OK[{"assignment":{"date":"2026-06-11","childId":101,"pickupId":456,'
-                '"assignmentId":901,"version":"assignment-version-before","writeToken":"assignment-write-token-before"}}]'
+                '//OK[2026,24,4,11,0,0,1,0,1,0,0,101,0,0,'
+                '["java.util.ArrayList/4159755760","se.tempus.common.shared.wrapper.ChildScheduleHomeWrapper/2354870038"],0,7]'
             )
 
     monkeypatch.setattr(api_module, "ReadOnlyTempusTransport", FakeTransport)
@@ -51,10 +51,35 @@ def test_pickup_assignment_authenticates_then_reads(monkeypatch):
     api = api_module.TempusApi(session=object(), permutation="P")
 
     assert api.pickup_assignment("2026-06-11", 101)["child_id"] == "101"
-    assert calls == ["authenticateUserWithCookies", "getPickupDateAssignment"]
+    assert calls == ["authenticateUserWithCookies", "getWeekSchedules"]
 
 
-def test_assign_pickup_uses_pickup_write_transport(monkeypatch):
+def test_children_and_notifications_authenticates_then_reads(monkeypatch):
+    calls = []
+
+    class FakeTransport:
+        def __init__(self, session):
+            pass
+
+        def post_rpc(self, url, payload, headers=None, **kwargs):
+            calls.append(rpc_method_from_payload(payload))
+            if calls[-1] == "authenticateUserWithCookies":
+                return DummyResponse("//OK[]")
+            return DummyResponse(
+                '//OK[0,0,101,3,0,0,4,2,1,["java.util.ArrayList/4159755760",'
+                '"se.tempus.common.shared.wrapper.Child/3395224863","Generated Child",'
+                '"java.util.TreeSet/4043497002"],0,7]'
+            )
+
+    monkeypatch.setattr(api_module, "ReadOnlyTempusTransport", FakeTransport)
+
+    api = api_module.TempusApi(session=object(), permutation="P")
+
+    assert api.children_and_notifications() == [{"id": "101", "name": "Generated Child"}]
+    assert calls == ["authenticateUserWithCookies", "getChildrenAndNotifications"]
+
+
+def test_assign_pickup_uses_update_schedule_write_transport(monkeypatch):
     calls = []
 
     class FakeTransport:
@@ -63,10 +88,9 @@ def test_assign_pickup_uses_pickup_write_transport(monkeypatch):
 
         def post_pickup_write_rpc(self, url, payload, headers=None, **kwargs):
             calls.append(rpc_method_from_payload(payload))
-            return DummyResponse('//OK[{"success":true,"assignmentId":901,"version":"assignment-version-after"}]')
+            return DummyResponse("//OK[]")
 
     monkeypatch.setattr(api_module, "ReadOnlyTempusTransport", FakeTransport)
-
     api = api_module.TempusApi(session=object(), permutation="P")
 
     result = api.assign_pickup(
@@ -74,14 +98,18 @@ def test_assign_pickup_uses_pickup_write_transport(monkeypatch):
             "date": "2026-06-11",
             "child_id": "101",
             "pickup_id": "123",
-            "assignment_id": "901",
-            "version": "assignment-version-before",
-            "write_token": "assignment-write-token-before",
+            "pickup_name": "Generated Pickup",
+            "pickup_phone": "0700000000",
+            "owner_name": "Generated Owner",
+            "pickup_child_ids": ["101", "102", "103"],
+            "schedule_id": "901",
+            "start_ms": "28800000",
+            "end_ms": "59400000",
         }
     )
 
-    assert result["success"] is True
-    assert calls == ["assignPickupForDate"]
+    assert result == {"success": True}
+    assert calls == ["updateSchedule"]
 
 
 def test_contact_write_methods_remain_disabled():

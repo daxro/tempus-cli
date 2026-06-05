@@ -1,0 +1,12 @@
+{
+  "argument_order": ["weeks"],
+  "argument_types": ["java.util.ArrayList/4159755760", "se.tempus.common.date.YearWeek/2102053017"],
+  "child_id_source": "getChildrenAndNotifications Child wrapper id",
+  "date_representation": "ISO week/year plus weekday in DaySchedule wrapper",
+  "fixture_type": "tempus_pickup_date_assignment_capture",
+  "gwt_rpc_method": "getWeekSchedules",
+  "request_payload": "7|0|6|https://home.tempusinfo.se/tempusHome/tempusHome/|PERMUTATION|se.limesaudio.tempushome.client.HomeService|getWeekSchedules|java.util.ArrayList/4159755760|se.tempus.common.date.YearWeek/2102053017|1|2|3|4|1|5|5|1|6|24|2026|",
+  "response_body": "//OK[2026,24,4,11,59400000,3,28800000,3,901,0,0,101,0,0,[\"java.util.ArrayList/4159755760\",\"se.tempus.common.shared.wrapper.ChildScheduleHomeWrapper/2354870038\",\"se.tempus.common.date.TimeOnly/1619208844\"],0,7]",
+  "scope": "pickup_date_assignment",
+  "version": 1
+}

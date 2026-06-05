@@ -25,16 +25,17 @@ ALLOWED_STOCKHOLM_PATH_PREFIXES = (
 )
 READ_ONLY_RPC_METHODS = {
     "authenticateUserWithCookies",
-    "getPickupDateAssignment",
+    "getChildrenAndNotifications",
     "getSchemas",
     "getGrandIdIdentityProviders",
     "getPickups",
+    "getWeekSchedules",
     "heartbeat",
     "isCreateLoginCookieEnabled",
     "isUsernamePasswordEnabled",
 }
 PICKUP_WRITE_RPC_METHODS = {
-    "assignPickupForDate",
+    "updateSchedule",
 }
 WRITE_WORDS = (
     "save",

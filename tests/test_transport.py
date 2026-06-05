@@ -7,10 +7,13 @@ from tempus_cli.gwt import (
     GWT_MODULE_BASE,
     TEMPUS_HOME_URL,
     payload_assign_pickup_for_date,
+    payload_get_children_and_notifications,
     payload_get_pickup_date_assignment,
     payload_get_pickups,
     payload_get_schemas,
+    payload_get_week_schedules,
     payload_remove_pickup,
+    payload_update_schedule_assignment,
 )
 from tempus_cli.net import TempusNetworkError
 from tempus_cli.transport import ReadOnlyTempusTransport, rpc_method_from_payload
@@ -42,11 +45,22 @@ def test_allows_get_pickups_as_read_only_rpc():
     t._check_rpc_method("getPickups")
 
 
-def test_allows_exact_assignment_read_despite_assign_word():
+def test_blocks_unverified_assignment_read_despite_get_prefix():
     t = ReadOnlyTempusTransport(object())
-    t._check_rpc_method("getPickupDateAssignment")
+    with pytest.raises(SafetyError, match="write-like"):
+        t._check_rpc_method("getPickupDateAssignment")
     with pytest.raises(SafetyError, match="write-like"):
         t._check_rpc_method("getPickupDateAssignmentUpdate")
+
+
+def test_allows_children_and_notifications_read():
+    t = ReadOnlyTempusTransport(object())
+    t._check_rpc_method("getChildrenAndNotifications")
+
+
+def test_allows_week_schedules_read():
+    t = ReadOnlyTempusTransport(object())
+    t._check_rpc_method("getWeekSchedules")
 
 
 def test_allows_cookie_auth_and_heartbeat_as_read_only_rpc():
@@ -61,9 +75,11 @@ def test_generic_rpc_blocks_pickup_write():
         t._check_rpc_method("removePickup")
 
 
-def test_pickup_write_path_allows_only_pickup_writes():
+def test_pickup_write_path_blocks_unverified_assignment_writes():
     t = ReadOnlyTempusTransport(object())
-    t._check_pickup_write_rpc_method("assignPickupForDate")
+    t._check_pickup_write_rpc_method("updateSchedule")
+    with pytest.raises(SafetyError, match="non-pickup"):
+        t._check_pickup_write_rpc_method("assignPickupForDate")
     with pytest.raises(SafetyError, match="non-pickup"):
         t._check_pickup_write_rpc_method("updateRecord")
 
@@ -90,19 +106,23 @@ def test_pickup_write_path_recomputes_method_from_payload():
     t = ReadOnlyTempusTransport(session)
     t.post_pickup_write_rpc(
         "https://home.tempusinfo.se/tempusHome/tempusHome/service",
-        payload_assign_pickup_for_date(
+        payload_update_schedule_assignment(
             "A" * 32,
             {
                 "date": "2026-06-11",
                 "child_id": "101",
                 "pickup_id": "123",
-                "assignment_id": "901",
-                "version": "assignment-version-before",
-                "write_token": "assignment-write-token-before",
+                "pickup_name": "Generated Pickup",
+                "pickup_phone": "0700000000",
+                "owner_name": "Generated Owner",
+                "pickup_child_ids": ["101", "102", "103"],
+                "schedule_id": "901",
+                "start_ms": "28800000",
+                "end_ms": "59400000",
             },
         ),
     )
-    assert rpc_method_from_payload(session.payload) == "assignPickupForDate"
+    assert rpc_method_from_payload(session.payload) == "updateSchedule"
 
 
 def test_pickup_write_path_rejects_disabled_contact_write_payload():
@@ -123,7 +143,22 @@ def test_pickup_write_path_rejects_read_payload():
         )
 
 
-def test_generic_rpc_allows_assignment_read_payload():
+def test_generic_rpc_blocks_unverified_assignment_read_payload():
+    class Session:
+        def post(self, url, data=None, headers=None, **kwargs):
+            response = requests.Response()
+            response.status_code = 200
+            return response
+
+    t = ReadOnlyTempusTransport(Session())
+    with pytest.raises(SafetyError, match="write-like"):
+        t.post_rpc(
+            "https://home.tempusinfo.se/tempusHome/tempusHome/service",
+            payload_get_pickup_date_assignment("A" * 32, "2026-06-11", 101),
+        )
+
+
+def test_generic_rpc_allows_week_schedules_payload():
     class Session:
         def post(self, url, data=None, headers=None, **kwargs):
             response = requests.Response()
@@ -133,7 +168,21 @@ def test_generic_rpc_allows_assignment_read_payload():
     t = ReadOnlyTempusTransport(Session())
     t.post_rpc(
         "https://home.tempusinfo.se/tempusHome/tempusHome/service",
-        payload_get_pickup_date_assignment("A" * 32, "2026-06-11", 101),
+        payload_get_week_schedules("A" * 32, [(2026, 24)]),
+    )
+
+
+def test_generic_rpc_allows_children_and_notifications_payload():
+    class Session:
+        def post(self, url, data=None, headers=None, **kwargs):
+            response = requests.Response()
+            response.status_code = 200
+            return response
+
+    t = ReadOnlyTempusTransport(Session())
+    t.post_rpc(
+        "https://home.tempusinfo.se/tempusHome/tempusHome/service",
+        payload_get_children_and_notifications("A" * 32),
     )
 
 

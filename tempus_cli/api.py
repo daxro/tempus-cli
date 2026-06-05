@@ -1,3 +1,5 @@
+import datetime
+
 import requests
 
 from . import gwt
@@ -72,6 +74,14 @@ class TempusApi:
         resp.raise_for_status()
         return gwt.parse_pickups(resp.text)
 
+    def children_and_notifications(self):
+        perm = self.ensure_permutation()
+        self.authenticate_user_with_cookies()
+        payload = gwt.payload_get_children_and_notifications(perm)
+        resp = self.transport.post_rpc(gwt.GWT_SERVICE_URL, payload, headers=gwt.headers(perm), timeout=gwt.HTTP_TIMEOUT)
+        resp.raise_for_status()
+        return gwt.parse_children_and_notifications(resp.text)
+
     def create_pickup(self, name, phone, children):
         raise RuntimeError(PICKUP_CONTACT_WRITES_DISABLED)
 
@@ -84,14 +94,16 @@ class TempusApi:
     def pickup_assignment(self, pickup_date, child_id):
         perm = self.ensure_permutation()
         self.authenticate_user_with_cookies()
-        payload = gwt.payload_get_pickup_date_assignment(perm, pickup_date, child_id)
+        requested = datetime.date.fromisoformat(pickup_date)
+        iso_year, iso_week, _ = requested.isocalendar()
+        payload = gwt.payload_get_week_schedules(perm, [(iso_year, iso_week)])
         resp = self.transport.post_rpc(gwt.GWT_SERVICE_URL, payload, headers=gwt.headers(perm), timeout=gwt.HTTP_TIMEOUT)
         resp.raise_for_status()
-        return gwt.parse_pickup_assignment(resp.text)
+        return gwt.parse_week_schedule_assignment(resp.text, pickup_date, child_id)
 
     def assign_pickup(self, assignment):
         perm = self.ensure_permutation()
-        payload = gwt.payload_assign_pickup_for_date(perm, assignment)
+        payload = gwt.payload_update_schedule_assignment(perm, assignment)
         resp = self.transport.post_pickup_write_rpc(
             gwt.GWT_SERVICE_URL,
             payload,

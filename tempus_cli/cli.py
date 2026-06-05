@@ -341,16 +341,48 @@ def _child_rows_from_raw(raw):
     return values
 
 
-def _resolve_child_id(pickups, child_name):
+def _child_id_matches_from_pickups(pickups, child_name):
     wanted = _validate_non_empty(child_name, "--child")
-    matches = set()
+    wanted_lower = wanted.lower()
+    exact_matches = set()
+    partial_matches = set()
     for pickup in pickups:
         raw = pickup.get("_raw") or {}
         for child in _child_rows_from_raw(raw):
             name = child.get("name") or child.get("displayName") or child.get("fullName")
             child_id = child.get("id") or child.get("childId") or child.get("homeChildId")
-            if str(name or "").strip() == wanted and child_id is not None:
-                matches.add(str(child_id))
+            normalized_name = str(name or "").strip()
+            if not normalized_name or child_id is None:
+                continue
+            if normalized_name.lower() == wanted_lower:
+                exact_matches.add(str(child_id))
+            elif wanted_lower in normalized_name.lower():
+                partial_matches.add(str(child_id))
+    return exact_matches or partial_matches
+
+
+def _child_id_matches_from_directory(children, child_name):
+    wanted = _validate_non_empty(child_name, "--child")
+    wanted_lower = wanted.lower()
+    exact_matches = {
+        str(child["id"])
+        for child in children
+        if str(child.get("name") or "").strip().lower() == wanted_lower and child.get("id") is not None
+    }
+    if exact_matches:
+        return exact_matches
+    return {
+        str(child["id"])
+        for child in children
+        if wanted_lower in str(child.get("name") or "").strip().lower() and child.get("id") is not None
+    }
+
+
+def _resolve_child_id(api, pickups, child_name):
+    wanted = _validate_non_empty(child_name, "--child")
+    matches = _child_id_matches_from_pickups(pickups, wanted)
+    if not matches:
+        matches = _child_id_matches_from_directory(api.children_and_notifications(), wanted)
     if not matches:
         raise ValueError(f"child '{wanted}' did not resolve to a fixture-proven server ID")
     if len(matches) > 1:
@@ -358,14 +390,22 @@ def _resolve_child_id(pickups, child_name):
     return next(iter(matches))
 
 
-def _assignment_write_fields(assignment, pickup_id):
+def _assignment_write_fields(assignment, pickup):
+    raw = pickup.get("_raw") or {}
+    owner_name = raw.get("owner_name")
+    if not owner_name:
+        raise ValueError("pickup assignment missed required owner field")
     return {
         "date": assignment["date"],
         "child_id": assignment["child_id"],
-        "pickup_id": str(pickup_id),
-        "assignment_id": assignment["assignment_id"],
-        "version": assignment["version"],
-        "write_token": assignment["write_token"],
+        "pickup_id": str(pickup["id"]),
+        "pickup_name": pickup["name"],
+        "pickup_phone": pickup["phone"] or "",
+        "owner_name": owner_name,
+        "pickup_child_ids": raw.get("pickup_child_ids") or [assignment["child_id"]],
+        "schedule_id": assignment["schedule_id"],
+        "start_ms": assignment["start_ms"],
+        "end_ms": assignment["end_ms"],
     }
 
 
@@ -373,7 +413,7 @@ def _assignment_preview(args, pickups, api):
     pickup = _find_pickup(pickups, args.pickup_id) if args.pickup_id else _find_pickup_by_name(pickups, args.name)
     contact = _public_pickup(pickup)
     child_name = _validate_non_empty(args.child, "--child")
-    child_id = _resolve_child_id(pickups, child_name)
+    child_id = _resolve_child_id(api, pickups, child_name)
     pickup_date = _validate_pickup_date(args.date)
     assignment = api.pickup_assignment(pickup_date, child_id)
     if assignment.get("date") != pickup_date or assignment.get("child_id") != child_id:
@@ -382,6 +422,8 @@ def _assignment_preview(args, pickups, api):
     proposed = dict(existing)
     proposed["pickup_id"] = contact.get("id")
     changed = existing.get("pickup_id") != contact.get("id")
+    block_reason = assignment.get("block_reason")
+    blocked = bool(block_reason)
     return {
         "mode": "preview",
         "operation": "assign",
@@ -397,14 +439,28 @@ def _assignment_preview(args, pickups, api):
         "contact_write": None,
         "assignment_write": {
             "required": True,
-            "method": "assignPickupForDate",
-            "required_fields": ["date", "child_id", "pickup_id", "assignment_id", "version", "write_token"],
+            "method": "updateSchedule",
+            "required_fields": [
+                "date",
+                "child_id",
+                "pickup_id",
+                "pickup_name",
+                "pickup_phone",
+                "owner_name",
+                "pickup_child_ids",
+                "schedule_id",
+                "start_ms",
+                "end_ms",
+            ],
+            "blocked": blocked,
+            "block_reason": block_reason,
         },
+        "_contact_state": pickup,
         "_assignment_state": assignment,
         "write_performed": False,
-        "would_write_if_applied": changed,
-        "blocked": False,
-        "block_reason": "no_op" if not changed else None,
+        "would_write_if_applied": changed and not blocked,
+        "blocked": blocked,
+        "block_reason": block_reason or ("no_op" if not changed else None),
     }
 
 
@@ -473,9 +529,9 @@ def _preview_assumptions(preview):
             "date": assignment["date"],
             "child_id": assignment["child_id"],
             "pickup_id": assignment["pickup_id"],
-            "assignment_id": assignment["assignment_id"],
-            "version": assignment["version"],
-            "write_token": assignment["write_token"],
+            "schedule_id": assignment["schedule_id"],
+            "start_ms": assignment["start_ms"],
+            "end_ms": assignment["end_ms"],
         },
     }
 
@@ -483,6 +539,8 @@ def _preview_assumptions(preview):
 def _apply_assignment(args, api, preview):
     if preview.get("blocked"):
         raise ValueError(f"pickup assignment is blocked: {preview.get('block_reason')}")
+    if not preview.get("_assignment_state", {}).get("write_supported"):
+        raise ValueError(PICKUP_WRITES_DISABLED)
     if not preview.get("would_write_if_applied"):
         raise ValueError("pickup assignment is already in requested state")
 
@@ -493,7 +551,7 @@ def _apply_assignment(args, api, preview):
     if after_reread != before:
         raise ValueError("pickup assignment preview assumptions changed; re-run preview")
 
-    write_payload = _assignment_write_fields(reread["_assignment_state"], reread["contact"]["id"])
+    write_payload = _assignment_write_fields(reread["_assignment_state"], reread["_contact_state"])
     write_result = api.assign_pickup(write_payload)
     result = dict(reread)
     result["mode"] = "apply"

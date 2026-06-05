@@ -1,5 +1,6 @@
 import json
 import re
+from datetime import date
 
 TEMPUS_HOME_URL = "https://home.tempusinfo.se/tempusHome/"
 GWT_SERVICE_URL = "https://home.tempusinfo.se/tempusHome/tempusHome/service"
@@ -56,6 +57,19 @@ def payload_get_pickups(permutation):
     return no_arg_rpc_payload(permutation, "getPickups")
 
 
+def payload_get_children_and_notifications(permutation):
+    return no_arg_rpc_payload(permutation, "getChildrenAndNotifications")
+
+
+def payload_get_week_schedules(permutation, weeks):
+    encoded_weeks = "".join(f"6|{int(week)}|{int(year)}|" for year, week in weeks)
+    return (
+        f"7|0|6|{GWT_MODULE_BASE}|{permutation}|{HOME_SERVICE}|getWeekSchedules|"
+        "java.util.ArrayList/4159755760|se.tempus.common.date.YearWeek/2102053017|"
+        f"1|2|3|4|1|5|5|{len(weeks)}|{encoded_weeks}"
+    )
+
+
 def payload_authenticate_user_with_cookies(permutation, use_nu_cookie=False, use_bearer_auth=False):
     return bool_bool_rpc_payload(
         permutation,
@@ -90,12 +104,38 @@ def assignment_write_rpc_payload(permutation, method, assignment):
     )
 
 
+def update_schedule_assignment_payload(permutation, assignment):
+    pickup_child_ids = [str(value) for value in assignment["pickup_child_ids"]]
+    pickup_child_values = "".join(f"10|{int(value)}|" for value in pickup_child_ids)
+    requested = date.fromisoformat(assignment["date"])
+    return (
+        f"7|0|16|{GWT_MODULE_BASE}|{permutation}|{HOME_SERVICE}|updateSchedule|"
+        "I|se.tempus.common.date.DateOnly/4090038506|"
+        "se.tempus.common.shared.wrapper.DaySchedule/3784037161|"
+        "se.tempus.common.shared.wrapper.Pickup/873253356|"
+        "java.util.ArrayList/4159755760|java.lang.Integer/3438268394|"
+        f"{assignment['owner_name']}|{assignment['pickup_name']}|{assignment['pickup_phone']}|"
+        "java.util.TreeSet/4043497002|se.tempus.common.shared.wrapper.Schedulation/1710330904|"
+        "se.tempus.common.date.TimeOnly/1619208844|"
+        "1|2|3|4|3|5|6|7|"
+        f"{int(assignment['child_id'])}|6|{requested.day}|{requested.month}|{requested.year}|"
+        "7|0|0|0|0|8|9|2|"
+        f"{pickup_child_values}"
+        f"11|{int(assignment['pickup_id'])}|12|13|0|0|14|0|1|15|0|"
+        f"{int(assignment['schedule_id'])}|16|{int(assignment['start_ms'])}|16|{int(assignment['end_ms'])}|"
+    )
+
+
 def payload_get_pickup_date_assignment(permutation, pickup_date, child_id):
     return string_int_rpc_payload(permutation, "getPickupDateAssignment", pickup_date, child_id)
 
 
 def payload_assign_pickup_for_date(permutation, assignment):
     return assignment_write_rpc_payload(permutation, "assignPickupForDate", assignment)
+
+
+def payload_update_schedule_assignment(permutation, assignment):
+    return update_schedule_assignment_payload(permutation, assignment)
 
 
 def _string_table(response):
@@ -205,6 +245,13 @@ def _string_from_table(strings, ref):
     return strings[ref - 1]
 
 
+def _human_string_from_table(strings, ref):
+    value = _string_from_table(strings, ref)
+    if not value or value.startswith(("java.", "se.", "[L")):
+        return None
+    return value
+
+
 def _parse_encoded_pickups(data):
     if not isinstance(data, list):
         return []
@@ -259,6 +306,8 @@ def _parse_encoded_pickups(data):
         pickup_id = record[2] if isinstance(record[2], int) and record[2] > len(strings) else None
         children = []
         raw_children = []
+        pickup_child_ids = []
+        owner_name = _string_from_table(strings, record[3]) if len(record) > 3 else None
         for child_index in range(3, len(record) - 2):
             child_name = _string_from_table(strings, record[child_index])
             child_id = record[child_index + 1]
@@ -270,12 +319,21 @@ def _parse_encoded_pickups(data):
             ):
                 children.append(child_name)
                 raw_children.append({"name": child_name, "id": str(child_id)})
+        for child_index in range(4, len(record) - 1):
+            child_id = record[child_index]
+            if isinstance(child_id, int) and record[child_index + 1] == integer_class:
+                pickup_child_ids.append(str(child_id))
         pickup = {
             "id": str(pickup_id) if pickup_id is not None else None,
             "name": name,
             "phone": phone or None,
             "children": children,
-            "_raw": {"encoded": record, "children": raw_children},
+            "_raw": {
+                "encoded": record,
+                "children": raw_children,
+                "owner_name": owner_name,
+                "pickup_child_ids": pickup_child_ids,
+            },
         }
         if pickup["id"] or pickup["name"] or pickup["phone"]:
             pickups.append(pickup)
@@ -328,6 +386,155 @@ def parse_pickups(response):
     return pickups
 
 
+def parse_children_and_notifications(response):
+    if not response.startswith("//OK"):
+        raise RuntimeError("Tempus children response was not a successful GWT RPC response")
+    data = _json_payload(response)
+    if not isinstance(data, list):
+        raise RuntimeError("Tempus children response could not be parsed")
+    string_table_index = next(
+        (
+            index
+            for index, value in enumerate(data)
+            if isinstance(value, list) and all(isinstance(item, str) for item in value)
+        ),
+        None,
+    )
+    if string_table_index is None:
+        raise RuntimeError("Tempus children response did not contain a string table")
+
+    strings = data[string_table_index]
+    child_class = next(
+        (index + 1 for index, value in enumerate(strings) if value.startswith("se.tempus.common.shared.wrapper.Child/")),
+        None,
+    )
+    if child_class is None:
+        raise RuntimeError("Tempus children response did not contain child data")
+
+    rows = []
+    seen = set()
+    prefix = data[:string_table_index]
+    for index in range(0, max(0, len(prefix) - 4)):
+        if prefix[index] != 0 or prefix[index + 1] != 0:
+            continue
+        child_id = prefix[index + 2]
+        name_ref = prefix[index + 3]
+        name = _string_from_table(strings, name_ref)
+        if (
+            not isinstance(child_id, int)
+            or not name
+            or name.startswith(("java.", "se.", "[L"))
+            or child_class not in prefix[index + 4 : index + 12]
+        ):
+            continue
+        key = (str(child_id), name)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({"id": str(child_id), "name": name})
+    if not rows:
+        raise RuntimeError("Tempus children response did not contain recognized child rows")
+    return rows
+
+
+def parse_week_schedule_assignment(response, pickup_date, child_id):
+    if not response.startswith("//OK"):
+        raise RuntimeError("Tempus week schedule response was not a successful GWT RPC response")
+    data = _json_payload(response)
+    if not isinstance(data, list):
+        raise RuntimeError("Tempus week schedule response could not be parsed")
+    string_table_index = next(
+        (
+            index
+            for index, value in enumerate(data)
+            if isinstance(value, list) and all(isinstance(item, str) for item in value)
+        ),
+        None,
+    )
+    if string_table_index is None:
+        raise RuntimeError("Tempus week schedule response did not contain a string table")
+
+    prefix = data[:string_table_index]
+    strings = data[string_table_index]
+    try:
+        requested = date.fromisoformat(pickup_date)
+    except ValueError as exc:
+        raise RuntimeError("Tempus week schedule parser requires YYYY-MM-DD date") from exc
+    iso_year, iso_week, iso_weekday = requested.isocalendar()
+    child_id_text = str(child_id)
+
+    starts = [
+        index
+        for index in range(0, max(0, len(prefix) - 3))
+        if prefix[index] == iso_year
+        and prefix[index + 1] == iso_week
+        and prefix[index + 2] == iso_weekday
+    ]
+    if not starts:
+        raise RuntimeError("Tempus week schedule response did not contain requested date")
+
+    date_start = starts[0]
+    next_start = next(
+        (
+            index
+            for index in range(date_start + 1, max(date_start + 1, len(prefix) - 3))
+            if prefix[index] == iso_year
+            and isinstance(prefix[index + 1], int)
+            and 1 <= prefix[index + 2] <= 7
+        ),
+        len(prefix),
+    )
+    record = prefix[date_start:next_start]
+    child_seen = any(str(value) == child_id_text for value in record)
+    if not child_seen:
+        raise RuntimeError("Tempus week schedule response did not contain requested child/date")
+    time_class = next(
+        (index + 1 for index, value in enumerate(strings) if value.startswith("se.tempus.common.date.TimeOnly/")),
+        None,
+    )
+    pickup_class = next(
+        (index + 1 for index, value in enumerate(strings) if value.startswith("se.tempus.common.shared.wrapper.Pickup/")),
+        None,
+    )
+    schedule_id = None
+    start_ms = None
+    end_ms = None
+    if time_class is not None:
+        for index in range(4, max(4, len(record) - 4)):
+            if record[index + 1] == time_class and record[index + 3] == time_class:
+                end_ms = record[index]
+                start_ms = record[index + 2]
+                if isinstance(record[index + 4], int):
+                    schedule_id = record[index + 4]
+                break
+    pickup_id = None
+    if pickup_class in record:
+        pickup_index = record.index(pickup_class)
+        for index in range(max(0, pickup_index - 16), max(0, pickup_index - 3)):
+            pickup_phone = _human_string_from_table(strings, record[index])
+            pickup_name = _human_string_from_table(strings, record[index + 1])
+            candidate_id = record[index + 2]
+            owner = _human_string_from_table(strings, record[index + 3])
+            if owner and pickup_name and pickup_phone and isinstance(candidate_id, int) and candidate_id > len(strings):
+                pickup_id = str(candidate_id)
+                break
+    write_supported = schedule_id is not None and start_ms is not None and end_ms is not None
+
+    return {
+        "date": pickup_date,
+        "child_id": child_id_text,
+        "pickup_id": pickup_id,
+        "assignment_id": None,
+        "version": None,
+        "write_token": None,
+        "write_supported": write_supported,
+        "block_reason": None if write_supported else "assignment_write_method_unavailable",
+        "schedule_id": str(schedule_id) if schedule_id is not None else None,
+        "start_ms": str(start_ms) if start_ms is not None else None,
+        "end_ms": str(end_ms) if end_ms is not None else None,
+    }
+
+
 def parse_pickup_assignment(response):
     if not response.startswith("//OK"):
         raise RuntimeError("Tempus pickup assignment response was not a successful GWT RPC response")
@@ -353,11 +560,23 @@ def parse_pickup_assignment(response):
 def parse_assignment_write_response(response):
     if not response.startswith("//OK"):
         raise RuntimeError("Tempus pickup assignment write response was not a successful GWT RPC response")
+    if response.strip() == "//OK[]":
+        return {"success": True}
     data = _json_payload(response)
     if data is None:
         raise RuntimeError("Tempus pickup assignment write response could not be parsed")
     raw = _first_dict(data)
     if raw is None:
+        strings = next(
+            (
+                value
+                for value in data
+                if isinstance(value, list) and all(isinstance(item, str) for item in value)
+            ),
+            [],
+        )
+        if any(value.startswith("se.tempus.common.shared.wrapper.DaySchedule/") for value in strings):
+            return {"success": True}
         raise RuntimeError("Tempus pickup assignment write response did not contain recognized result data")
     success = raw.get("success")
     if success is False:
