@@ -15,6 +15,7 @@ compatibility: Requires the tempus command, network access to the allowlisted Te
 - Freja eID+ login always requires human approval.
 - Treat `tempus pickup` as read/preview-only unless the command itself supports fixture-backed `--apply --confirm` writes.
 - Treat exit code `2` as invalid or missing input, `1` as an operational failure, and `130` as interruption.
+- For pickup date-assignment fixture capture, keep raw capture files and replacement maps outside the repository. Run `uv run python -m tempus_cli.pickup_fixtures --input RAW --replacements REPLACEMENTS --output tests/fixtures/pickup_date_assignment/NAME.json`, review the sanitized output, and only commit generated placeholders.
 
 ## Common Commands
 

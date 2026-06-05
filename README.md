@@ -57,6 +57,25 @@ Human-readable output is the default. `status`, `schemas`, `providers`, and `pic
 - Session files, cookies, SAML values, query values, personal numbers, and token-like values must never be committed or shared.
 - Network access is restricted to HTTPS and an explicit host/path allowlist.
 
+## Sanitized Pickup Fixtures
+
+Pickup date-assignment payload work must start from a sanitized capture, never raw production traffic. Save the browser or proxy capture outside the repository, then create a local replacement file outside the repository:
+
+```json
+{
+  "Real child name": "Example Child",
+  "Real pickup contact name": "Example Guardian"
+}
+```
+
+Generate the fixture with:
+
+```bash
+uv run python -m tempus_cli.pickup_fixtures --input /path/outside/repo/raw.har --replacements /path/outside/repo/replacements.json --output tests/fixtures/pickup_date_assignment/assignment.har.json
+```
+
+Review the output before committing. It must contain generated placeholders only, no personal numbers, real names, cookies, sessions, SAML values, tokens, raw production traffic, or unredacted sensitive URLs. This sanitizer does not enable writes; date-assignment writes remain disabled until reviewed sanitized fixtures prove the exact GWT payloads.
+
 ## Agents
 
 Agents operating the CLI should read [`.agents/skills/tempus-cli/SKILL.md`](.agents/skills/tempus-cli/SKILL.md).
