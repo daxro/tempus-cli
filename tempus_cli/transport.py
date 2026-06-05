@@ -24,9 +24,11 @@ ALLOWED_STOCKHOLM_PATH_PREFIXES = (
     "/NECSadcfreja/",
 )
 READ_ONLY_RPC_METHODS = {
+    "authenticateUserWithCookies",
     "getSchemas",
     "getGrandIdIdentityProviders",
     "getPickups",
+    "heartbeat",
     "isCreateLoginCookieEnabled",
     "isUsernamePasswordEnabled",
 }

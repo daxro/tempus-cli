@@ -38,6 +38,12 @@ def no_arg_rpc_payload(permutation, method):
     return f"7|0|4|{GWT_MODULE_BASE}|{permutation}|{HOME_SERVICE}|{method}|1|2|3|4|0|"
 
 
+def bool_bool_rpc_payload(permutation, method, first=False, second=False):
+    first_value = "1" if first else "0"
+    second_value = "1" if second else "0"
+    return f"7|0|5|{GWT_MODULE_BASE}|{permutation}|{HOME_SERVICE}|{method}|Z|1|2|3|4|2|5|5|{first_value}|{second_value}|"
+
+
 def payload_get_schemas(permutation, area_id):
     return int_rpc_payload(permutation, "getSchemas", area_id)
 
@@ -48,6 +54,19 @@ def payload_get_grand_id_identity_providers(permutation, schema_id):
 
 def payload_get_pickups(permutation):
     return no_arg_rpc_payload(permutation, "getPickups")
+
+
+def payload_authenticate_user_with_cookies(permutation, use_nu_cookie=False, use_bearer_auth=False):
+    return bool_bool_rpc_payload(
+        permutation,
+        "authenticateUserWithCookies",
+        first=use_nu_cookie,
+        second=use_bearer_auth,
+    )
+
+
+def payload_heartbeat(permutation):
+    return no_arg_rpc_payload(permutation, "heartbeat")
 
 
 def payload_remove_pickup(permutation, pickup_id):

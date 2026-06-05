@@ -29,6 +29,7 @@ def test_stockholm_login_url_keeps_parameters_out_of_logs_only_by_caller():
 def _mock_login_flow(monkeypatch, session_module, calls):
     class FakeApi:
         def __init__(self, session=None):
+            self.session = session
             pass
 
         def schemas(self, area_id):
@@ -36,6 +37,10 @@ def _mock_login_flow(monkeypatch, session_module, calls):
 
         def identity_providers(self, schema_id):
             return [{"name": "Stockholm-inlogg", "option": "STOCKHOLM_PROD"}]
+
+        def authenticate_user_with_cookies(self):
+            calls.setdefault("authenticated_sessions", []).append(self.session)
+            return True
 
     class FakeTransport:
         def __init__(self, session):
@@ -58,7 +63,6 @@ def _mock_login_flow(monkeypatch, session_module, calls):
         lambda transport, html, url: ('<a href="/freja/start">Freja</a>', "https://login001.stockholm.se/page"),
     )
     monkeypatch.setattr(session_module, "freja_login", fake_freja_login)
-    monkeypatch.setattr(session_module, "verify_login_return", lambda session: True)
 
 
 def test_login_passes_timeout_and_progress_to_stderr(monkeypatch, capsys):
@@ -71,7 +75,12 @@ def test_login_passes_timeout_and_progress_to_stderr(monkeypatch, capsys):
     session_module.login(personnummer=TEST_PERSONNUMMER, session=raw_session, freja_timeout=180)
 
     captured = capsys.readouterr()
-    assert calls == {"raw_session": raw_session, "personnummer": TEST_PERSONNUMMER, "timeout": 180}
+    assert calls == {
+        "authenticated_sessions": [raw_session],
+        "raw_session": raw_session,
+        "personnummer": TEST_PERSONNUMMER,
+        "timeout": 180,
+    }
     assert captured.out == ""
     assert "Freja" in captured.err
 
@@ -155,7 +164,7 @@ def test_verify_login_return_rejects_login_failure_page():
         verify_login_return(session)
 
 
-def test_verify_authenticated_uses_pickups_read(monkeypatch):
+def test_verify_authenticated_uses_cookie_auth_and_heartbeat(monkeypatch):
     from tempus_cli import session as session_module
 
     calls = []
@@ -164,14 +173,19 @@ def test_verify_authenticated_uses_pickups_read(monkeypatch):
         def __init__(self, session):
             calls.append(session)
 
-        def pickups(self):
-            return []
+        def authenticate_user_with_cookies(self):
+            calls.append("auth")
+            return True
+
+        def heartbeat(self):
+            calls.append("heartbeat")
+            return True
 
     raw_session = object()
     monkeypatch.setattr(session_module, "TempusApi", FakeApi)
 
     assert session_module.verify_authenticated(raw_session) is True
-    assert calls == [raw_session]
+    assert calls == [raw_session, "auth", "heartbeat"]
 
 
 def test_status_text_reports_no_persisted_session(tmp_path):

@@ -145,7 +145,7 @@ def login(personnummer=None, session=None, quiet=False, freja_timeout=180.0, all
     )
     resp = follow_redirects(transport, transport.get(freja_page.url, allow_redirects=False, timeout=HTTP_TIMEOUT))
     handle_saml_chain(transport, resp.text, resp.url)
-    verify_login_return(session)
+    api.authenticate_user_with_cookies()
     return session
 
 
@@ -170,7 +170,9 @@ def verify_login_return(session):
 
 def verify_authenticated(session):
     """Verify authentication with an allowlisted read-only Tempus RPC."""
-    TempusApi(session=session).pickups()
+    api = TempusApi(session=session)
+    api.authenticate_user_with_cookies()
+    api.heartbeat()
     return True
 
 

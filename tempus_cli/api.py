@@ -39,8 +39,31 @@ class TempusApi:
         resp.raise_for_status()
         return gwt.parse_identity_providers(resp.text)
 
+    def authenticate_user_with_cookies(self, use_nu_cookie=False, use_bearer_auth=False):
+        perm = self.ensure_permutation()
+        payload = gwt.payload_authenticate_user_with_cookies(
+            perm,
+            use_nu_cookie=use_nu_cookie,
+            use_bearer_auth=use_bearer_auth,
+        )
+        resp = self.transport.post_rpc(gwt.GWT_SERVICE_URL, payload, headers=gwt.headers(perm), timeout=gwt.HTTP_TIMEOUT)
+        resp.raise_for_status()
+        if not resp.text.startswith("//OK"):
+            raise RuntimeError("Tempus cookie authentication did not return a successful GWT RPC response")
+        return True
+
+    def heartbeat(self):
+        perm = self.ensure_permutation()
+        payload = gwt.payload_heartbeat(perm)
+        resp = self.transport.post_rpc(gwt.GWT_SERVICE_URL, payload, headers=gwt.headers(perm), timeout=gwt.HTTP_TIMEOUT)
+        resp.raise_for_status()
+        if not resp.text.startswith("//OK"):
+            raise RuntimeError("Tempus heartbeat did not return a successful GWT RPC response")
+        return True
+
     def pickups(self):
         perm = self.ensure_permutation()
+        self.authenticate_user_with_cookies()
         payload = gwt.payload_get_pickups(perm)
         resp = self.transport.post_rpc(gwt.GWT_SERVICE_URL, payload, headers=gwt.headers(perm), timeout=gwt.HTTP_TIMEOUT)
         resp.raise_for_status()

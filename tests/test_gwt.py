@@ -4,9 +4,11 @@ from tempus_cli.gwt import (
     parse_identity_providers,
     parse_pickups,
     parse_schemas,
+    payload_authenticate_user_with_cookies,
     payload_get_grand_id_identity_providers,
     payload_get_pickups,
     payload_get_schemas,
+    payload_heartbeat,
     payload_remove_pickup,
 )
 
@@ -18,7 +20,17 @@ def test_payloads_match_observed_shape():
     assert payload_get_schemas("P", 12) == '7|0|5|https://home.tempusinfo.se/tempusHome/tempusHome/|P|se.limesaudio.tempushome.client.HomeService|getSchemas|I|1|2|3|4|1|5|12|'
     assert "getGrandIdIdentityProviders" in payload_get_grand_id_identity_providers("P", 399)
     assert "getPickups" in payload_get_pickups("P")
+    assert payload_heartbeat("P") == '7|0|4|https://home.tempusinfo.se/tempusHome/tempusHome/|P|se.limesaudio.tempushome.client.HomeService|heartbeat|1|2|3|4|0|'
     assert "removePickup" in payload_remove_pickup("P", 123)
+
+
+def test_authenticate_user_with_cookies_payload_matches_observed_shape():
+    assert payload_authenticate_user_with_cookies("P") == (
+        "7|0|5|https://home.tempusinfo.se/tempusHome/tempusHome/|P|"
+        "se.limesaudio.tempushome.client.HomeService|authenticateUserWithCookies|Z|"
+        "1|2|3|4|2|5|5|0|0|"
+    )
+    assert payload_authenticate_user_with_cookies("P", use_nu_cookie=True, use_bearer_auth=True).endswith("|1|1|")
 
 
 def test_parse_schemas():

@@ -33,6 +33,12 @@ def test_allows_get_pickups_as_read_only_rpc():
     t._check_rpc_method("getPickups")
 
 
+def test_allows_cookie_auth_and_heartbeat_as_read_only_rpc():
+    t = ReadOnlyTempusTransport(object())
+    t._check_rpc_method("authenticateUserWithCookies")
+    t._check_rpc_method("heartbeat")
+
+
 def test_generic_rpc_blocks_pickup_write():
     t = ReadOnlyTempusTransport(object())
     with pytest.raises(SafetyError, match="write-like"):
