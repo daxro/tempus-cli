@@ -147,6 +147,86 @@ def _normalize_pickup(raw):
     return pickup
 
 
+def _string_from_table(strings, ref):
+    if not isinstance(ref, int) or ref <= 0 or ref > len(strings):
+        return None
+    return strings[ref - 1]
+
+
+def _parse_encoded_pickups(data):
+    if not isinstance(data, list):
+        return []
+    string_table_index = next(
+        (
+            index
+            for index, value in enumerate(data)
+            if isinstance(value, list) and all(isinstance(item, str) for item in value)
+        ),
+        None,
+    )
+    if string_table_index is None:
+        return []
+
+    strings = data[string_table_index]
+    pickup_class = next(
+        (index + 1 for index, value in enumerate(strings) if value.startswith("se.tempus.common.shared.wrapper.Pickup/")),
+        None,
+    )
+    integer_class = next(
+        (index + 1 for index, value in enumerate(strings) if value.startswith("java.lang.Integer/")),
+        None,
+    )
+    if pickup_class is None or integer_class is None:
+        return []
+
+    records = []
+    prefix = data[:string_table_index]
+    if len(prefix) >= 3 and prefix[-2:] == [0, 1]:
+        prefix = prefix[:-3]
+    index = 0
+    while index + 1 < len(prefix):
+        if prefix[index] != 0 or prefix[index + 1] != 0:
+            index += 1
+            continue
+        end = index + 2
+        while end < len(prefix):
+            if end + 1 < len(prefix) and prefix[end] == 0 and prefix[end + 1] == 0:
+                break
+            end += 1
+        record = prefix[index + 2 : end]
+        if pickup_class in record:
+            record = record[: len(record) - list(reversed(record)).index(pickup_class)]
+        if len(record) >= 6 and record[-1] == pickup_class:
+            records.append(record)
+        index = end
+
+    pickups = []
+    for record in records:
+        phone = _string_from_table(strings, record[0])
+        name = _string_from_table(strings, record[1])
+        pickup_id = record[2] if isinstance(record[2], int) and record[2] > len(strings) else None
+        children = []
+        for child_index in range(3, len(record) - 2):
+            child_name = _string_from_table(strings, record[child_index])
+            if (
+                child_name
+                and not child_name.startswith(("java.", "se."))
+                and isinstance(record[child_index + 1], int)
+                and record[child_index + 2] == integer_class
+            ):
+                children.append(child_name)
+        pickup = {
+            "id": str(pickup_id) if pickup_id is not None else None,
+            "name": name,
+            "phone": phone or None,
+            "children": children,
+            "_raw": {"encoded": record},
+        }
+        if pickup["id"] or pickup["name"] or pickup["phone"]:
+            pickups.append(pickup)
+    return pickups
+
+
 def parse_schemas(response):
     strings = _string_table(response)
     names = [s for s in strings if not s.startswith(("java.", "se.")) and not s.startswith("tempus-")]
@@ -186,6 +266,8 @@ def parse_pickups(response):
         pickup = _normalize_pickup(raw)
         if pickup and pickup not in pickups:
             pickups.append(pickup)
+    if not pickups:
+        pickups = _parse_encoded_pickups(data)
     if not pickups:
         raise RuntimeError("Tempus pickup response did not contain recognized pickup data")
     return pickups

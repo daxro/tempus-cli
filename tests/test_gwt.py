@@ -61,6 +61,77 @@ def test_parse_pickups_from_sanitized_fixture():
     ]
 
 
+def test_parse_pickups_from_encoded_tree_set_fixture():
+    strings = [
+        "java.util.TreeSet/4043497002",
+        "se.tempus.common.shared.wrapper.Pickup/873253356",
+        "java.util.ArrayList/4159755760",
+        "java.lang.Integer/3438268394",
+        "Example Child A",
+        "Example Guardian A",
+        "Example Child B",
+        "Example Guardian B",
+        "0700000000",
+        "",
+    ]
+    response = (
+        "//OK"
+        + repr(
+            [
+                0,
+                0,
+                10,
+                6,
+                123,
+                5,
+                456,
+                4,
+                789,
+                4,
+                1,
+                3,
+                2,
+                0,
+                0,
+                9,
+                8,
+                124,
+                7,
+                457,
+                4,
+                789,
+                4,
+                1,
+                3,
+                2,
+                2,
+                0,
+                1,
+                strings,
+                0,
+                7,
+            ]
+        ).replace("'", '"')
+    )
+
+    assert parse_pickups(response) == [
+        {
+            "id": "123",
+            "name": "Example Guardian A",
+            "phone": None,
+            "children": ["Example Child A"],
+            "_raw": {"encoded": [10, 6, 123, 5, 456, 4, 789, 4, 1, 3, 2]},
+        },
+        {
+            "id": "124",
+            "name": "Example Guardian B",
+            "phone": "0700000000",
+            "children": ["Example Child B"],
+            "_raw": {"encoded": [9, 8, 124, 7, 457, 4, 789, 4, 1, 3, 2]},
+        },
+    ]
+
+
 def test_parse_pickups_empty_list():
     assert parse_pickups("//OK[]") == []
 
