@@ -1,9 +1,11 @@
 import argparse
 from datetime import date
+import getpass
 import json
 import os
 import re
 import sys
+import tempfile
 
 import requests
 
@@ -12,7 +14,14 @@ from .api import PICKUP_CONTACT_WRITES_DISABLED, TempusApi
 from .errors import FrejaError, TempusError
 from .paths import default_config_path, default_session_path
 from .redact import redact_text
-from .session import login, read_config_personnummer, resolve_personnummer, status_text, verify_authenticated
+from .session import (
+    login,
+    read_config_personnummer,
+    resolve_personnummer,
+    status_text,
+    validate_personnummer,
+    verify_authenticated,
+)
 from .session_store import load_session_opt_in, save_session_opt_in
 
 AREA_IDS = {"stockholm": 12}
@@ -26,7 +35,7 @@ def build_parser():
   tempus status --json
   tempus schemas --area Stockholm --json
   tempus pickup --json
-  TEMPUS_PERSONNUMMER=YYYYMMDDNNNN tempus setup --no-input
+  tempus setup --personnummer YYYYMMDDNNNN
 
 environment:
   TEMPUS_PERSONNUMMER  12-digit personal number used for Freja eID+ login
@@ -54,7 +63,7 @@ exit codes:
         description="Verify Freja eID+ login, then save local config and session files.",
         epilog="""examples:
   tempus setup
-  TEMPUS_PERSONNUMMER=YYYYMMDDNNNN tempus setup --no-input
+  tempus setup --personnummer YYYYMMDDNNNN
 
 safety:
   requires human approval in Freja eID+
@@ -63,7 +72,8 @@ safety:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     setup.add_argument("-q", "--quiet", action="store_true", help="Suppress progress messages on stderr")
-    setup.add_argument("--no-input", action="store_true", help="Disable prompts; require environment or saved config")
+    setup.add_argument("--personnummer", help="Personnummer to use for setup")
+    setup.add_argument("--no-input", action="store_true", help="Disable prompts; require environment or --personnummer")
     setup.add_argument("--freja-timeout", type=float, default=180.0, help="Seconds to wait for Freja approval (default: 180)")
 
     schemas = sub.add_parser(
@@ -135,13 +145,52 @@ def _public_result(value):
     return value
 
 
+def _write_private_text(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_path = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    with os.fdopen(fd, "w", encoding="utf-8") as file:
+        os.fchmod(file.fileno(), 0o600)
+        file.write(content)
+        file.flush()
+        os.fsync(file.fileno())
+    try:
+        os.replace(temporary_path, path)
+        os.chmod(path, 0o600)
+    finally:
+        try:
+            os.unlink(temporary_path)
+        except FileNotFoundError:
+            pass
+
+
 def _write_config_personnummer(personnummer, path=None):
     path = path or default_config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as file:
-        file.write(f"TEMPUS_PERSONNUMMER={personnummer}\n")
-    os.chmod(path, 0o600)
+    _write_private_text(path, f"TEMPUS_PERSONNUMMER={personnummer}\n")
+
+
+def _persist_setup_state(personnummer, session):
+    config_path = default_config_path()
+    session_path = default_session_path()
+    previous_config = config_path.read_text() if config_path.exists() else None
+    try:
+        _write_config_personnummer(personnummer, config_path)
+        save_session_opt_in(session, session_path)
+    except Exception:
+        if previous_config is None:
+            config_path.unlink(missing_ok=True)
+        else:
+            _write_private_text(config_path, previous_config)
+        raise
+
+
+def _resolve_setup_personnummer(personnummer=None, *, no_input=False):
+    if personnummer is None and (no_input or not sys.stdin.isatty()):
+        personnummer = os.environ.get("TEMPUS_PERSONNUMMER")
+        if not personnummer:
+            raise ValueError("TEMPUS_PERSONNUMMER is required when input is non-interactive")
+    if personnummer is None:
+        personnummer = getpass.getpass("Personal number for Freja (hidden): ").strip()
+    return validate_personnummer(personnummer)
 
 
 def _status_dict(config_path=None, session_path=None):
@@ -665,15 +714,22 @@ def _pickup(args):
 
 
 def _setup(args):
-    personnummer = resolve_personnummer(allow_prompt=not args.no_input)
+    existing = read_config_personnummer()
+    if existing and args.personnummer is None and not args.no_input and sys.stdin.isatty():
+        resolve_personnummer(personnummer=existing, allow_prompt=False)
+        print("Already configured.", file=sys.stderr)
+        answer = input("Overwrite? [y/N] ").strip().lower()
+        if answer != "y":
+            return
+
+    personnummer = _resolve_setup_personnummer(args.personnummer, no_input=args.no_input)
     session = login(
         personnummer=personnummer,
         quiet=args.quiet,
         freja_timeout=args.freja_timeout,
         allow_prompt=False,
     )
-    _write_config_personnummer(personnummer)
-    save_session_opt_in(session, default_session_path())
+    _persist_setup_state(personnummer, session)
     if not args.quiet:
         print("Authenticated and saved local session.", file=sys.stderr)
     print(status_text())

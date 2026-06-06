@@ -129,9 +129,134 @@ def test_setup_does_not_write_config_when_login_fails(monkeypatch, tmp_path):
 def test_setup_help_includes_examples_and_safety(capsys):
     assert main(["setup", "--help"]) == 0
     out = capsys.readouterr().out
-    assert "TEMPUS_PERSONNUMMER" in out
+    assert "--personnummer" in out
     assert "Freja" in out
     assert "does not write Tempus data" in out
+
+
+def test_setup_explicit_personnummer_wins_over_env(monkeypatch, capsys, tmp_path):
+    from tempus_cli import cli as cli_module
+
+    config_file = tmp_path / "config.env"
+    session_file = tmp_path / "session.json"
+    fake_session = object()
+    calls = {}
+    monkeypatch.setenv("TEMPUS_PERSONNUMMER", "1" * 12)
+    monkeypatch.setattr(cli_module, "default_config_path", lambda: config_file)
+    monkeypatch.setattr(cli_module, "default_session_path", lambda: session_file)
+    monkeypatch.setattr(
+        cli_module,
+        "login",
+        lambda **kwargs: calls.update(login=kwargs) or fake_session,
+    )
+    monkeypatch.setattr(cli_module, "save_session_opt_in", lambda session, path: calls.update(session=session, path=path))
+
+    assert main(["setup", "--personnummer", "2" * 12, "-q"]) == 0
+
+    assert config_file.read_text() == f"TEMPUS_PERSONNUMMER={'2' * 12}\n"
+    assert calls["login"]["personnummer"] == "2" * 12
+    assert capsys.readouterr().err == ""
+
+
+def test_setup_explicit_personnummer_works_with_no_input(monkeypatch, tmp_path):
+    from tempus_cli import cli as cli_module
+
+    config_file = tmp_path / "config.env"
+    session_file = tmp_path / "session.json"
+    calls = {}
+    monkeypatch.setattr(cli_module, "default_config_path", lambda: config_file)
+    monkeypatch.setattr(cli_module, "default_session_path", lambda: session_file)
+    monkeypatch.setattr(cli_module, "login", lambda **kwargs: calls.update(login=kwargs) or object())
+    monkeypatch.setattr(cli_module, "save_session_opt_in", lambda session, path: None)
+
+    assert main(["setup", "--personnummer", TEST_PERSONNUMMER, "--no-input", "-q"]) == 0
+    assert calls["login"]["personnummer"] == TEST_PERSONNUMMER
+
+
+def test_setup_prompts_when_tty_has_no_explicit_or_noninteractive_input(monkeypatch, tmp_path):
+    from tempus_cli import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "default_config_path", lambda: tmp_path / "config.env")
+    monkeypatch.setattr(cli_module, "default_session_path", lambda: tmp_path / "session.json")
+    monkeypatch.setattr(cli_module, "read_config_personnummer", lambda: None)
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(cli_module.getpass, "getpass", lambda prompt: TEST_PERSONNUMMER)
+    monkeypatch.setattr(cli_module, "login", lambda **kwargs: object())
+    monkeypatch.setattr(cli_module, "save_session_opt_in", lambda session, path: None)
+
+    assert main(["setup", "-q"]) == 0
+
+
+def test_setup_no_input_does_not_use_saved_config(monkeypatch, capsys, tmp_path):
+    from tempus_cli import cli as cli_module
+
+    config_file = tmp_path / "config.env"
+    config_file.write_text(f"TEMPUS_PERSONNUMMER={TEST_PERSONNUMMER}\n")
+    monkeypatch.delenv("TEMPUS_PERSONNUMMER", raising=False)
+    monkeypatch.setattr(cli_module, "default_config_path", lambda: config_file)
+    monkeypatch.setattr(cli_module, "login", lambda **kwargs: (_ for _ in ()).throw(AssertionError("login called")))
+
+    assert main(["setup", "--no-input"]) == 2
+    assert "TEMPUS_PERSONNUMMER" in capsys.readouterr().err
+
+
+def test_setup_decline_keeps_existing_state(monkeypatch, tmp_path):
+    from tempus_cli import cli as cli_module
+
+    config_file = tmp_path / "config.env"
+    session_file = tmp_path / "session.json"
+    config_file.write_text(f"TEMPUS_PERSONNUMMER={TEST_PERSONNUMMER}\n")
+    session_file.write_text("[]")
+    monkeypatch.setattr(cli_module, "default_config_path", lambda: config_file)
+    monkeypatch.setattr(cli_module, "default_session_path", lambda: session_file)
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    monkeypatch.setattr(cli_module, "login", lambda **kwargs: (_ for _ in ()).throw(AssertionError("login called")))
+
+    assert main(["setup"]) == 0
+    assert config_file.read_text() == f"TEMPUS_PERSONNUMMER={TEST_PERSONNUMMER}\n"
+    assert session_file.read_text() == "[]"
+
+
+def test_setup_login_failure_keeps_existing_state(monkeypatch, tmp_path):
+    from tempus_cli import cli as cli_module
+
+    config_file = tmp_path / "config.env"
+    session_file = tmp_path / "session.json"
+    config_file.write_text(f"TEMPUS_PERSONNUMMER={TEST_PERSONNUMMER}\n")
+    session_file.write_text("[]")
+    monkeypatch.setattr(cli_module, "default_config_path", lambda: config_file)
+    monkeypatch.setattr(cli_module, "default_session_path", lambda: session_file)
+    monkeypatch.setattr(
+        cli_module,
+        "login",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("login failed")),
+    )
+
+    assert main(["setup", "--personnummer", "2" * 12, "-q"]) == 1
+    assert config_file.read_text() == f"TEMPUS_PERSONNUMMER={TEST_PERSONNUMMER}\n"
+    assert session_file.read_text() == "[]"
+
+
+def test_setup_session_save_failure_keeps_existing_state(monkeypatch, tmp_path):
+    from tempus_cli import cli as cli_module
+
+    config_file = tmp_path / "config.env"
+    session_file = tmp_path / "session.json"
+    config_file.write_text(f"TEMPUS_PERSONNUMMER={TEST_PERSONNUMMER}\n")
+    session_file.write_text("[]")
+    monkeypatch.setattr(cli_module, "default_config_path", lambda: config_file)
+    monkeypatch.setattr(cli_module, "default_session_path", lambda: session_file)
+    monkeypatch.setattr(cli_module, "login", lambda **kwargs: object())
+    monkeypatch.setattr(
+        cli_module,
+        "save_session_opt_in",
+        lambda session, path: (_ for _ in ()).throw(RuntimeError("session save failed")),
+    )
+
+    assert main(["setup", "--personnummer", "2" * 12, "-q"]) == 1
+    assert config_file.read_text() == f"TEMPUS_PERSONNUMMER={TEST_PERSONNUMMER}\n"
+    assert session_file.read_text() == "[]"
 
 
 def test_schemas_json_has_stable_shape(monkeypatch, capsys):

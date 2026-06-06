@@ -11,6 +11,7 @@ from .paths import default_config_path, default_session_path
 from .redact import redact_text
 from .session_store import load_session_opt_in
 from .transport import ReadOnlyTempusTransport
+from stockholm_freja import FrejaInputError, validate_personnummer as validate_freja_personnummer
 
 HTTP_TIMEOUT = 30
 REDIRECT_CODES = (301, 302, 303, 307, 308)
@@ -102,9 +103,10 @@ def read_config_personnummer(path=None):
 
 
 def validate_personnummer(personnummer):
-    if not re.fullmatch(r"\d{12}", personnummer or ""):
+    try:
+        return validate_freja_personnummer(personnummer)
+    except FrejaInputError:
         raise ValueError("TEMPUS_PERSONNUMMER must contain exactly 12 digits")
-    return personnummer
 
 
 def resolve_personnummer(personnummer=None, *, allow_prompt=True):

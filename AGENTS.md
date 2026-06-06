@@ -18,7 +18,7 @@ Run the focused tests for changed behavior before the full suite.
 
 - Preserve the central HTTPS host/path allowlist, read-only RPC allowlist, and separate pickup-write allowlist.
 - Do not add remote write operations without an explicitly verified RPC, sanitized fixtures, and an explicit user request.
-- Never commit or log real personal numbers, cookies, sessions, SAML values, tokens, or unredacted sensitive URLs.
+- Never commit or log real cookies, sessions, SAML values, tokens, or unredacted sensitive URLs.
 - Use generated placeholder values in tests instead of plausible personal identifiers.
 - Keep prompts TTY-only. Non-interactive commands must fail with actionable stderr and no traceback.
 - Keep stdout for command data and stderr for prompts, progress, and errors.
@@ -30,7 +30,7 @@ Working commands are `status`, `setup`, `schemas`, `providers`, `login`, and `pi
 
 - Human-readable output is the default.
 - Read commands and `pickup` support `--json`.
-- `TEMPUS_PERSONNUMMER` is the only supported personal-number environment variable.
+- `TEMPUS_PERSONNUMMER` remains the compatibility environment variable for non-interactive setup.
 - `--no-input` must disable all prompting.
 
 ## Documentation

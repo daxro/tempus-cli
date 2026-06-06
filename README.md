@@ -23,19 +23,21 @@ Uninstall with `uv tool uninstall tempus-cli`.
 
 ## Setup
 
-Interactive setup:
+For agent setup, give your personnummer to the agent and have it run:
+
+```bash
+tempus setup --personnummer YYYYMMDDNNNN
+```
+
+Approve the Freja eID+ request on your phone. Setup saves local config and session files outside the repository with `0600` permissions. It does not write Tempus data.
+
+Interactive setup remains available:
 
 ```bash
 tempus setup
 ```
 
-Non-interactive setup:
-
-```bash
-TEMPUS_PERSONNUMMER=YYYYMMDDNNNN tempus setup --no-input
-```
-
-Setup requires human approval in Freja eID+. It saves local config and session files outside the repository with `0600` permissions. It does not write Tempus data.
+For automation compatibility, `TEMPUS_PERSONNUMMER` remains supported for `--no-input` or non-TTY setup, but `setup --personnummer` is the primary agent-facing path.
 
 ## Commands
 
@@ -61,7 +63,7 @@ Human-readable output is the default. `status`, `schemas`, `providers`, and `pic
 
 - Remote Tempus operations are read-only except explicitly confirmed pickup writes after fixture-backed enablement.
 - Unknown and write-like Tempus RPC methods are blocked centrally; pickup writes use a separate allowlist.
-- Session files, cookies, SAML values, query values, personal numbers, and token-like values must never be committed or shared.
+- Session files, cookies, SAML values, query values, and token-like values must never be committed or shared.
 - Network access is restricted to HTTPS and an explicit host/path allowlist.
 
 ## Sanitized Pickup Fixtures

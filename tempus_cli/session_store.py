@@ -1,6 +1,7 @@
 import http.cookiejar
 import json
 import os
+import tempfile
 from pathlib import Path
 
 from .errors import SafetyError
@@ -30,10 +31,20 @@ def save_session_opt_in(session, path):
             "httponly": "HttpOnly" in c._rest,
         })
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
+    fd, temporary_path = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        os.fchmod(f.fileno(), 0o600)
         json.dump(cookies, f)
-    os.chmod(path, 0o600)
+        f.flush()
+        os.fsync(f.fileno())
+    try:
+        os.replace(temporary_path, path)
+        os.chmod(path, 0o600)
+    finally:
+        try:
+            os.unlink(temporary_path)
+        except FileNotFoundError:
+            pass
 
 
 def load_session_opt_in(session, path) -> bool:
