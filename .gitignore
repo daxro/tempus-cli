@@ -1,25 +1,32 @@
+# Local OS/editor files
+.DS_Store
+
 # Local environment and sensitive files
 .env
 .env.*
 config.env
 *session*.json
 *.har
-
-# Python
 .venv/
+
+# Python artifacts
 __pycache__/
 *.py[cod]
 *.egg-info/
 build/
 dist/
 
-# Tests and coverage
+# Tool caches and reports
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
 .coverage
 .coverage.*
 coverage.xml
 htmlcov/
 
-# Local system and agent scratch
-.DS_Store
+# Agent/local scratch space
 _temp_inbox/
+.playwright-mcp/
