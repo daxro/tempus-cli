@@ -178,7 +178,7 @@ def test_setup_prompts_when_tty_has_no_explicit_or_noninteractive_input(monkeypa
 
     monkeypatch.setattr(cli_module, "default_config_path", lambda: tmp_path / "config.env")
     monkeypatch.setattr(cli_module, "default_session_path", lambda: tmp_path / "session.json")
-    monkeypatch.setattr(cli_module, "read_config_personnummer", lambda: None)
+    monkeypatch.setattr(cli_module, "read_config_personnummer", lambda path=None: None)
     monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(cli_module.getpass, "getpass", lambda prompt: TEST_PERSONNUMMER)
     monkeypatch.setattr(cli_module, "login", lambda **kwargs: object())

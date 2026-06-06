@@ -168,9 +168,9 @@ def _write_config_personnummer(personnummer, path=None):
     _write_private_text(path, f"TEMPUS_PERSONNUMMER={personnummer}\n")
 
 
-def _persist_setup_state(personnummer, session):
-    config_path = default_config_path()
-    session_path = default_session_path()
+def _persist_setup_state(personnummer, session, *, config_path=None, session_path=None):
+    config_path = config_path or default_config_path()
+    session_path = session_path or default_session_path()
     previous_config = config_path.read_text() if config_path.exists() else None
     try:
         _write_config_personnummer(personnummer, config_path)
@@ -714,7 +714,9 @@ def _pickup(args):
 
 
 def _setup(args):
-    existing = read_config_personnummer()
+    config_path = default_config_path()
+    session_path = default_session_path()
+    existing = read_config_personnummer(config_path)
     if existing and args.personnummer is None and not args.no_input and sys.stdin.isatty():
         resolve_personnummer(personnummer=existing, allow_prompt=False)
         print("Already configured.", file=sys.stderr)
@@ -729,7 +731,7 @@ def _setup(args):
         freja_timeout=args.freja_timeout,
         allow_prompt=False,
     )
-    _persist_setup_state(personnummer, session)
+    _persist_setup_state(personnummer, session, config_path=config_path, session_path=session_path)
     if not args.quiet:
         print("Authenticated and saved local session.", file=sys.stderr)
     print(status_text())
