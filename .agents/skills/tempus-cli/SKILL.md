@@ -10,6 +10,7 @@ compatibility: Requires the tempus command, network access to the allowlisted Te
 
 - Use `--json` for `status`, `schemas`, `providers`, and `pickup`.
 - Use `--no-input` whenever the command runs non-interactively.
+- For "who picks up", "who is picking up", or pickup-by-date questions, use `tempus pickup --date YYYY-MM-DD --child CHILD_NAME --json --no-input`. Do not use `tempus pickup --child CHILD_NAME` for date questions; that only filters pickup contacts.
 - Provide the personal number only through the process environment variable `TEMPUS_PERSONNUMMER`.
 - Never print, store in the repository, or return personal numbers, cookies, sessions, SAML values, or tokens.
 - Freja eID+ login always requires human approval.
@@ -24,6 +25,7 @@ tempus status --json
 tempus schemas --area Stockholm --json
 tempus providers --schema-id 399 --json
 tempus pickup --json
+tempus pickup --date YYYY-MM-DD --child CHILD_NAME --json
 tempus pickup --date YYYY-MM-DD --child CHILD_NAME --id PICKUP_ID --json
 TEMPUS_PERSONNUMMER=YYYYMMDDNNNN tempus setup --no-input
 TEMPUS_PERSONNUMMER=YYYYMMDDNNNN tempus login --no-input

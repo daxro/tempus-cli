@@ -93,11 +93,12 @@ safety:
 
     pickup = sub.add_parser(
         "pickup",
-        help="List or preview guarded pickup contact changes",
-        description="List pickup contacts or preview guarded pickup contact changes.",
+        help="List contacts, read date pickups, or preview guarded pickup changes",
+        description="List pickup contacts, read date-specific pickup assignments, or preview guarded pickup changes.",
         epilog="""examples:
   tempus pickup
   tempus pickup --child CHILD_NAME --json
+  tempus pickup --date YYYY-MM-DD --child CHILD_NAME --json
   tempus pickup --child CHILD_NAME --name "Example Guardian" --phone "0700000000" --json
   tempus pickup --date YYYY-MM-DD --child CHILD_NAME --id PICKUP_ID --json
   tempus pickup --date YYYY-MM-DD --child CHILD_NAME --name "Example Guardian" --json
@@ -110,8 +111,8 @@ safety:
     )
     pickup.add_argument("--json", dest="json_output", action="store_true", help="Output stable JSON")
     pickup.add_argument("--no-input", action="store_true", help="Disable prompts; require saved session or environment")
-    pickup.add_argument("--date", help="Assign pickup for this local Tempus date (YYYY-MM-DD)")
-    pickup.add_argument("--child", help="Filter or assign to this child name")
+    pickup.add_argument("--date", help="Read or assign pickup for this local Tempus date (YYYY-MM-DD)")
+    pickup.add_argument("--child", help="Filter contacts or read/assign this child name")
     pickup.add_argument("--id", dest="pickup_id", help="Pickup contact ID for update, remove, or date assignment")
     pickup.add_argument("--name", help="Pickup contact name")
     pickup.add_argument("--phone", help="Pickup contact phone number")
@@ -264,7 +265,7 @@ def _pickup_operation(args):
         elif args.name is not None:
             _validate_non_empty(args.name, "--name")
         else:
-            raise ValueError("--date requires --id or --name")
+            return "read_assignment"
         return "assign"
 
     has_change = args.name is not None or args.phone is not None
@@ -294,6 +295,8 @@ def _validate_pickup_args(args):
     operation = _pickup_operation(args)
     if args.apply and operation == "list":
         raise ValueError("--apply requires a pickup change")
+    if args.apply and operation == "read_assignment":
+        raise ValueError("--apply requires --id or --name")
     if args.confirm and not args.apply:
         raise ValueError("--confirm requires --apply")
     if args.apply and not args.confirm:
@@ -326,6 +329,15 @@ def _find_pickup_by_name(pickups, name):
     if len(matches) > 1:
         raise ValueError(f"pickup contact name '{name}' matched multiple records; use --id")
     return matches[0]
+
+
+def _find_pickup_optional(pickups, pickup_id):
+    if pickup_id is None:
+        return None
+    matches = [pickup for pickup in pickups if str(pickup.get("id")) == str(pickup_id)]
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def _child_rows_from_raw(raw):
@@ -464,9 +476,35 @@ def _assignment_preview(args, pickups, api):
     }
 
 
+def _assignment_read_preview(args, pickups, api):
+    child_name = _validate_non_empty(args.child, "--child")
+    child_id = _resolve_child_id(api, pickups, child_name)
+    pickup_date = _validate_pickup_date(args.date)
+    assignment = api.pickup_assignment(pickup_date, child_id)
+    if assignment.get("date") != pickup_date or assignment.get("child_id") != child_id:
+        raise ValueError("pickup assignment read did not match requested child/date")
+    existing = _public_assignment(assignment)
+    pickup = _find_pickup_optional(pickups, existing.get("pickup_id"))
+    return {
+        "mode": "preview",
+        "operation": "read_assignment",
+        "date": pickup_date,
+        "child": {"name": child_name, "id": child_id},
+        "pickup": _public_pickup(pickup) if pickup else None,
+        "existing_assignment": existing,
+        "_assignment_state": assignment,
+        "write_performed": False,
+        "would_write_if_applied": False,
+        "blocked": False,
+        "block_reason": None if pickup else "no_pickup_assigned",
+    }
+
+
 def _pickup_preview(operation, args, pickups, api=None):
     if operation == "assign":
         return _assignment_preview(args, pickups, api)
+    if operation == "read_assignment":
+        return _assignment_read_preview(args, pickups, api)
 
     if operation == "create":
         proposed = {
@@ -591,7 +629,10 @@ def _pickup(args):
     if operation == "list":
         rows = [_public_pickup(pickup) for pickup in pickups if _child_matches(pickup, args.child)]
         if args.child and not rows:
-            raise RuntimeError(f"no pickup contacts matching child '{args.child}'")
+            raise RuntimeError(
+                f"no pickup contacts matching child '{args.child}'; "
+                "to check who picks up on a date, use --date YYYY-MM-DD --child CHILD_NAME --json"
+            )
         if args.json_output:
             _print_json(rows)
         else:
@@ -614,6 +655,8 @@ def _pickup(args):
             print(f"existing: {preview['existing_assignment']}")
         if preview.get("proposed_assignment"):
             print(f"proposed: {preview['proposed_assignment']}")
+        if preview.get("pickup"):
+            print(f"pickup: {preview['pickup']}")
         if preview.get("verification"):
             print(f"verification: {preview['verification']}")
         if preview.get("blocked"):

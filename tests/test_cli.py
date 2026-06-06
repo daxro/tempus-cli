@@ -310,6 +310,7 @@ def test_pickup_child_filter_no_match_fails(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "no pickup contacts matching child" in captured.err
+    assert "to check who picks up on a date" in captured.err
 
 
 def test_pickup_create_preview_json(monkeypatch, capsys):
@@ -435,6 +436,21 @@ def test_pickup_assign_by_name_requires_exact_unique_match(monkeypatch, capsys):
     assert data["blocked"] is False
 
 
+def test_pickup_date_child_reads_current_assignment_without_target_contact(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    fake = FakePickupApi(assignments=[_write_supported_assignment("read_after.json")])
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: fake)
+
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["operation"] == "read_assignment"
+    assert data["pickup"] == {"id": "123", "name": "Example Guardian", "phone": "0700000000", "children": ["Example Child"]}
+    assert data["existing_assignment"]["pickup_id"] == "123"
+    assert data["write_performed"] is False
+    assert data["would_write_if_applied"] is False
+
+
 def test_pickup_assign_resolves_child_from_directory_when_pickups_do_not_include_child_id(monkeypatch, capsys):
     from tempus_cli import cli as cli_module
 
@@ -516,15 +532,25 @@ def test_pickup_assign_requires_child_before_session(monkeypatch, capsys):
     assert "--child must not be empty" in capsys.readouterr().err
 
 
-def test_pickup_assign_requires_id_or_name_before_session(monkeypatch, capsys):
+def test_pickup_date_child_read_uses_session(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    fake = FakePickupApi(assignments=[_write_supported_assignment("read_after.json")])
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: fake)
+
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["operation"] == "read_assignment"
+
+
+def test_pickup_date_child_read_rejects_apply_without_target_before_session(monkeypatch, capsys):
     from tempus_cli import cli as cli_module
 
     calls = []
     monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: calls.append(no_input))
 
-    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--json"]) == 2
+    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--apply", "--confirm", "--json"]) == 2
     assert calls == []
-    assert "--date requires --id or --name" in capsys.readouterr().err
+    assert "--apply requires --id or --name" in capsys.readouterr().err
 
 
 def test_pickup_assign_rejects_contact_update_flags_before_session(monkeypatch, capsys):
