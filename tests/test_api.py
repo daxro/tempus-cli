@@ -1,3 +1,5 @@
+import pytest
+
 from tempus_cli import api as api_module
 from tempus_cli.transport import rpc_method_from_payload
 
@@ -119,9 +121,5 @@ def test_contact_write_methods_remain_disabled():
         lambda: api.update_pickup("123", "Generated Pickup", "0700000000", ["Generated Child"]),
         lambda: api.remove_pickup("123"),
     ):
-        try:
+        with pytest.raises(RuntimeError, match="pickup contact writes require sanitized Tempus write fixtures"):
             call()
-        except RuntimeError as exc:
-            assert "pickup contact writes require sanitized Tempus write fixtures" in str(exc)
-        else:
-            raise AssertionError("contact write should remain disabled")

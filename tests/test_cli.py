@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import requests
+import pytest
 from stockholm_freja import FrejaError
 
 from tempus_cli.cli import build_parser, main
@@ -96,7 +97,8 @@ def test_setup_no_input_uses_env_writes_config_and_saves_session(monkeypatch, ca
     assert capsys.readouterr().err == ""
 
 
-def test_setup_no_input_requires_personnummer_before_login(monkeypatch, capsys, tmp_path):
+@pytest.mark.parametrize("command", ["setup", "login"])
+def test_no_input_requires_personnummer_before_login(monkeypatch, capsys, tmp_path, command):
     from tempus_cli import cli as cli_module
     from tempus_cli import session as session_module
 
@@ -105,7 +107,7 @@ def test_setup_no_input_requires_personnummer_before_login(monkeypatch, capsys, 
     monkeypatch.setattr(session_module, "default_config_path", lambda: tmp_path / "missing.env")
     monkeypatch.setattr(cli_module, "login", lambda **kwargs: calls.append(kwargs))
 
-    assert main(["setup", "--no-input"]) == 2
+    assert main([command, "--no-input"]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "TEMPUS_PERSONNUMMER" in captured.err
@@ -162,22 +164,6 @@ def test_providers_json_has_stable_shape(monkeypatch, capsys):
 
     assert main(["providers", "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == rows
-
-
-def test_login_no_input_fails_before_login(monkeypatch, capsys, tmp_path):
-    from tempus_cli import cli as cli_module
-    from tempus_cli import session as session_module
-
-    calls = []
-    monkeypatch.delenv("TEMPUS_PERSONNUMMER", raising=False)
-    monkeypatch.setattr(session_module, "default_config_path", lambda: tmp_path / "missing.env")
-    monkeypatch.setattr(cli_module, "login", lambda **kwargs: calls.append(kwargs))
-
-    assert main(["login", "--no-input"]) == 2
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "TEMPUS_PERSONNUMMER" in captured.err
-    assert calls == []
 
 
 def test_unexpected_failure_has_no_traceback(monkeypatch, capsys):
@@ -691,7 +677,14 @@ def test_pickup_assign_apply_verification_mismatch_checks_child_and_date(monkeyp
     assert data["verified_assignment"]["child_id"] == "999"
 
 
-def test_pickup_assign_apply_post_write_read_failure_returns_partial_json(monkeypatch, capsys):
+@pytest.mark.parametrize(
+    "exception, message",
+    [
+        (RuntimeError("expired session"), "expired session"),
+        (requests.ReadTimeout("slow verification"), "slow verification"),
+    ],
+)
+def test_pickup_assign_apply_post_write_failure_returns_partial_json(monkeypatch, capsys, exception, message):
     from tempus_cli import cli as cli_module
 
     class FailingVerifyApi(FakePickupApi):
@@ -702,7 +695,7 @@ def test_pickup_assign_apply_post_write_read_failure_returns_partial_json(monkey
         def pickup_assignment(self, pickup_date, child_id):
             self.assignment_reads += 1
             if self.assignment_reads == 3:
-                raise RuntimeError("expired session")
+                raise exception
             return super().pickup_assignment(pickup_date, child_id)
 
     fake = FailingVerifyApi(
@@ -716,35 +709,7 @@ def test_pickup_assign_apply_post_write_read_failure_returns_partial_json(monkey
     assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--id", "123", "--apply", "--confirm", "--json"]) == 1
     data = json.loads(capsys.readouterr().out)
     assert data["write_performed"] is True
-    assert data["verification"] == {"matched": False, "error": "expired session"}
-
-
-def test_pickup_assign_apply_post_write_network_failure_returns_partial_json(monkeypatch, capsys):
-    from tempus_cli import cli as cli_module
-
-    class FailingVerifyApi(FakePickupApi):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.assignment_reads = 0
-
-        def pickup_assignment(self, pickup_date, child_id):
-            self.assignment_reads += 1
-            if self.assignment_reads == 3:
-                raise requests.ReadTimeout("slow verification")
-            return super().pickup_assignment(pickup_date, child_id)
-
-    fake = FailingVerifyApi(
-        assignments=[
-            _write_supported_assignment("read_before.json"),
-            _write_supported_assignment("read_before.json"),
-        ]
-    )
-    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: fake)
-
-    assert main(["pickup", "--date", "2026-06-11", "--child", "Example Child", "--id", "123", "--apply", "--confirm", "--json"]) == 1
-    data = json.loads(capsys.readouterr().out)
-    assert data["write_performed"] is True
-    assert data["verification"] == {"matched": False, "error": "slow verification"}
+    assert data["verification"] == {"matched": False, "error": message}
 
 
 def test_pickup_assign_requires_fixture_proven_child_id(monkeypatch, capsys):

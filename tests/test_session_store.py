@@ -1,5 +1,6 @@
 import os
 import requests
+import pytest
 
 from tempus_cli.errors import SafetyError
 from tempus_cli.session_store import load_session_opt_in, save_session_opt_in
@@ -37,8 +38,5 @@ def test_missing_and_corrupt_return_false(tmp_path):
 
 def test_refuse_repo_session_file():
     s = requests.Session()
-    try:
+    with pytest.raises(SafetyError):
         save_session_opt_in(s, "session.json")
-    except SafetyError:
-        return
-    raise AssertionError("expected SafetyError")

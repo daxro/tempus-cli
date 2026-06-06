@@ -40,9 +40,19 @@ def test_blocks_write_like_rpc():
         t._check_rpc_method("updateRecord")
 
 
-def test_allows_get_pickups_as_read_only_rpc():
+@pytest.mark.parametrize(
+    "method",
+    [
+        "getPickups",
+        "getChildrenAndNotifications",
+        "getWeekSchedules",
+        "authenticateUserWithCookies",
+        "heartbeat",
+    ],
+)
+def test_allows_read_only_rpc_method(method):
     t = ReadOnlyTempusTransport(object())
-    t._check_rpc_method("getPickups")
+    t._check_rpc_method(method)
 
 
 def test_blocks_unverified_assignment_read_despite_get_prefix():
@@ -51,22 +61,6 @@ def test_blocks_unverified_assignment_read_despite_get_prefix():
         t._check_rpc_method("getPickupDateAssignment")
     with pytest.raises(SafetyError, match="write-like"):
         t._check_rpc_method("getPickupDateAssignmentUpdate")
-
-
-def test_allows_children_and_notifications_read():
-    t = ReadOnlyTempusTransport(object())
-    t._check_rpc_method("getChildrenAndNotifications")
-
-
-def test_allows_week_schedules_read():
-    t = ReadOnlyTempusTransport(object())
-    t._check_rpc_method("getWeekSchedules")
-
-
-def test_allows_cookie_auth_and_heartbeat_as_read_only_rpc():
-    t = ReadOnlyTempusTransport(object())
-    t._check_rpc_method("authenticateUserWithCookies")
-    t._check_rpc_method("heartbeat")
 
 
 def test_generic_rpc_blocks_pickup_write():
@@ -158,32 +152,31 @@ def test_generic_rpc_blocks_unverified_assignment_read_payload():
         )
 
 
-def test_generic_rpc_allows_week_schedules_payload():
-    class Session:
-        def post(self, url, data=None, headers=None, **kwargs):
-            response = requests.Response()
-            response.status_code = 200
-            return response
+class RecordingSession:
+    def __init__(self):
+        self.calls = []
 
-    t = ReadOnlyTempusTransport(Session())
-    t.post_rpc(
-        "https://home.tempusinfo.se/tempusHome/tempusHome/service",
+    def post(self, url, data=None, headers=None, **kwargs):
+        self.calls.append((url, data, headers, kwargs))
+        response = requests.Response()
+        response.status_code = 200
+        return response
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
         payload_get_week_schedules("A" * 32, [(2026, 24)]),
-    )
-
-
-def test_generic_rpc_allows_children_and_notifications_payload():
-    class Session:
-        def post(self, url, data=None, headers=None, **kwargs):
-            response = requests.Response()
-            response.status_code = 200
-            return response
-
-    t = ReadOnlyTempusTransport(Session())
-    t.post_rpc(
-        "https://home.tempusinfo.se/tempusHome/tempusHome/service",
         payload_get_children_and_notifications("A" * 32),
-    )
+    ],
+)
+def test_generic_rpc_allows_read_payload(payload):
+    session = RecordingSession()
+    t = ReadOnlyTempusTransport(session)
+    url = "https://home.tempusinfo.se/tempusHome/tempusHome/service"
+    t.post_rpc(url, payload)
+
+    assert session.calls == [(url, payload, None, {})]
 
 
 def test_blocks_unknown_rpc():
