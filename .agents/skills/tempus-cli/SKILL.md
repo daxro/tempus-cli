@@ -32,3 +32,11 @@ TEMPUS_PERSONNUMMER=YYYYMMDDNNNN tempus login --no-input
 ```
 
 Human-readable output is available by omitting `--json`.
+
+## Update
+
+Update the installed CLI with:
+
+```bash
+uv tool upgrade tempus-cli
+```

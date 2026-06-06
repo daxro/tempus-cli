@@ -13,6 +13,12 @@ uv tool install git+https://github.com/daxro/tempus-cli.git
 tempus --help
 ```
 
+Update an existing install:
+
+```bash
+uv tool upgrade tempus-cli
+```
+
 Uninstall with `uv tool uninstall tempus-cli`.
 
 ## Setup
