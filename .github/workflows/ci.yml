@@ -42,3 +42,27 @@ jobs:
         working-directory: tempus-cli
       - run: git diff --check
         working-directory: tempus-cli
+
+  legacy-status:
+    if: always() && github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - name: Publish legacy status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          case "$TEST_RESULT" in
+            success) state=success ;;
+            failure) state=failure ;;
+            *) state=error ;;
+          esac
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state="$state" \
+            -f context="legacy/ci" \
+            -f description="CI ${TEST_RESULT}" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --silent
