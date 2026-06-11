@@ -28,6 +28,7 @@ READ_ONLY_RPC_METHODS = {
     "getChildrenAndNotifications",
     "getSchemas",
     "getGrandIdIdentityProviders",
+    "getHomeOverviewData",
     "getPickups",
     "getWeekSchedules",
     "heartbeat",

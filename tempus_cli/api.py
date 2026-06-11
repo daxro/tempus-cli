@@ -82,6 +82,14 @@ class TempusApi:
         resp.raise_for_status()
         return gwt.parse_children_and_notifications(resp.text)
 
+    def upcoming_events(self):
+        perm = self.ensure_permutation()
+        self.authenticate_user_with_cookies()
+        payload = gwt.payload_get_home_overview_data(perm)
+        resp = self.transport.post_rpc(gwt.GWT_SERVICE_URL, payload, headers=gwt.headers(perm), timeout=gwt.HTTP_TIMEOUT)
+        resp.raise_for_status()
+        return gwt.parse_upcoming_events(resp.text)
+
     def create_pickup(self, name, phone, children):
         raise RuntimeError(PICKUP_CONTACT_WRITES_DISABLED)
 

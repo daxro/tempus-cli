@@ -61,6 +61,10 @@ def payload_get_children_and_notifications(permutation):
     return no_arg_rpc_payload(permutation, "getChildrenAndNotifications")
 
 
+def payload_get_home_overview_data(permutation):
+    return no_arg_rpc_payload(permutation, "getHomeOverviewData")
+
+
 def payload_get_week_schedules(permutation, weeks):
     encoded_weeks = "".join(f"6|{int(week)}|{int(year)}|" for year, week in weeks)
     return (
@@ -159,13 +163,33 @@ def _string_table(response):
 
 def _json_payload(response):
     text = response[4:] if response.startswith("//OK") else response
-    m = re.search(r"(\[[\s\S]*\]|\{[\s\S]*\})", text)
-    if not m:
-        return None
+    text = text.lstrip()
+    decoder = json.JSONDecoder()
     try:
-        return json.loads(m.group(1))
+        data, end = decoder.raw_decode(text)
     except json.JSONDecodeError:
         return None
+    remainder = text[end:].lstrip()
+    if not isinstance(data, list):
+        return data if not remainder else None
+
+    merged = list(data)
+    while remainder.startswith(".concat("):
+        remainder = remainder[len(".concat(") :].lstrip()
+        try:
+            part, end = decoder.raw_decode(remainder)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(part, list):
+            return None
+        merged.extend(part)
+        remainder = remainder[end:].lstrip()
+        if not remainder.startswith(")"):
+            return None
+        remainder = remainder[1:].lstrip()
+    if remainder not in ("", ";"):
+        return None
+    return merged
 
 
 def _walk_dicts(value):
@@ -237,6 +261,358 @@ def _normalize_assignment(raw):
         "version": str(version),
         "write_token": str(write_token),
     }
+
+
+def _normalize_event_date(value):
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value).isoformat()
+        except ValueError:
+            return None
+    if isinstance(value, dict):
+        nested = value.get("date")
+        if isinstance(nested, str):
+            return _normalize_event_date(nested)
+        year = value.get("year")
+        month = value.get("month")
+        day = value.get("day")
+        if year is None or month is None or day is None:
+            return None
+        try:
+            return date(int(year), int(month), int(day)).isoformat()
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _value_from_keys(raw, keys):
+    for key in keys:
+        value = raw.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _normalize_upcoming_event(raw, *, child=None, unit=None):
+    if not isinstance(raw, dict):
+        return None
+    event_id = _value_from_keys(raw, ("id", "eventId", "calendarEventId"))
+    message = _value_from_keys(raw, ("message", "title", "name"))
+    start_date = _normalize_event_date(_value_from_keys(raw, ("startDate", "start_date", "date")))
+    stop_date = _normalize_event_date(_value_from_keys(raw, ("stopDate", "stop_date", "endDate", "end_date")))
+    if event_id is None or message is None:
+        return None
+    if start_date is None and stop_date is None:
+        return None
+    if stop_date is None:
+        stop_date = start_date
+    if start_date is None:
+        start_date = stop_date
+    return {
+        "child": str(child) if child is not None else None,
+        "unit": str(unit) if unit is not None else None,
+        "id": str(event_id) if event_id is not None else None,
+        "message": str(message) if message is not None else None,
+        "description": _value_from_keys(raw, ("description", "details")),
+        "start_date": start_date,
+        "stop_date": stop_date,
+        "scheduling_allowed": raw.get("schedulingAllowed", raw.get("scheduling_allowed")),
+    }
+
+
+def _context_value(raw, *, child=None, unit=None):
+    next_child = child
+    next_unit = unit
+    child_value = _value_from_keys(raw, ("childName", "child", "child_name"))
+    if isinstance(child_value, dict):
+        next_child = _value_from_keys(child_value, ("name", "displayName", "fullName", "childName")) or next_child
+        next_unit = _value_from_keys(child_value, ("unit", "departmentName", "department", "groupName", "group")) or next_unit
+    elif child_value is not None:
+        next_child = child_value
+    next_unit = _value_from_keys(raw, ("unit", "departmentName", "department", "groupName", "group")) or next_unit
+    return next_child, next_unit
+
+
+def _child_contexts(raw, child, unit):
+    children = raw.get("children")
+    if not isinstance(children, list):
+        return [(child, unit)]
+    contexts = []
+    for child_row in children:
+        if not isinstance(child_row, dict):
+            continue
+        child_name = _value_from_keys(child_row, ("name", "displayName", "fullName", "childName")) or child
+        child_unit = _value_from_keys(child_row, ("unit", "departmentName", "department", "groupName", "group")) or unit
+        if child_name is not None:
+            contexts.append((child_name, child_unit))
+    return contexts or [(child, unit)]
+
+
+def _extract_upcoming_events(value, *, child=None, unit=None, seen=None):
+    seen = set() if seen is None else seen
+    if isinstance(value, dict):
+        child, unit = _context_value(value, child=child, unit=unit)
+        direct_event = _normalize_upcoming_event(value, child=child, unit=unit)
+        if direct_event is not None:
+            key = id(value)
+            if key not in seen:
+                seen.add(key)
+                yield direct_event
+            return
+
+        for key_name in ("calendarEvent", "event"):
+            nested_event = value.get(key_name)
+            nested = _normalize_upcoming_event(nested_event, child=child, unit=unit)
+            if nested is not None:
+                key = id(nested_event)
+                if key not in seen:
+                    seen.add(key)
+                    yield nested
+
+        calendar_events = value.get("calendarEvents") or value.get("calendar_events")
+        if isinstance(calendar_events, list):
+            for event_child, event_unit in _child_contexts(value, child, unit):
+                for event in calendar_events:
+                    nested = _normalize_upcoming_event(event, child=event_child, unit=event_unit)
+                    if nested is not None:
+                        key = (id(event), event_child, event_unit)
+                        if key not in seen:
+                            seen.add(key)
+                            yield nested
+
+        for key_name, nested_value in value.items():
+            if key_name in {"calendarEvent", "calendarEvents", "calendar_events", "event"}:
+                continue
+            yield from _extract_upcoming_events(nested_value, child=child, unit=unit, seen=seen)
+    elif isinstance(value, list):
+        for nested_value in value:
+            yield from _extract_upcoming_events(nested_value, child=child, unit=unit, seen=seen)
+
+
+def _encoded_string_table(data):
+    if not isinstance(data, list):
+        return None, []
+    string_table_index = next(
+        (
+            index
+            for index, value in enumerate(data)
+            if isinstance(value, list) and all(isinstance(item, str) for item in value)
+        ),
+        None,
+    )
+    if string_table_index is None:
+        return None, []
+    return string_table_index, data[string_table_index]
+
+
+def _encoded_class_ref(strings, class_name):
+    return next((index + 1 for index, value in enumerate(strings) if value.startswith(class_name)), None)
+
+
+def _encoded_event_records(prefix, event_class, date_class, *, start=0, end=None):
+    end = len(prefix) if end is None else end
+    starts = [
+        index
+        for index in range(start, max(start, end - 2))
+        if prefix[index : index + 3] == [0, event_class, 0]
+    ]
+    # The first TreeSet item is serialized without a repeated CalendarEvent class
+    # marker when it immediately follows a HomeChild object.
+    if start > 0:
+        leading_end = starts[0] if starts else end
+        leading_candidates = [
+            index
+            for index in range(start, leading_end)
+            if prefix[index] == 0
+            and _encoded_date(prefix, index + 1, date_class) is not None
+            and _encoded_date(prefix, index + 5, date_class) is not None
+        ]
+        if leading_candidates:
+            starts.insert(0, leading_candidates[-1])
+    for position, record_start in enumerate(starts):
+        record_end = starts[position + 1] if position + 1 < len(starts) else end
+        yield prefix[record_start:record_end]
+
+
+def _encoded_date(record, index, date_class):
+    if index + 3 >= len(record) or record[index + 3] != date_class:
+        return None
+    return _normalize_event_date({"year": record[index], "month": record[index + 1], "day": record[index + 2]})
+
+
+def _encoded_event_text(strings, record, date_class, integer_class, *, start=0):
+    index = start
+    while index < len(record):
+        if _encoded_date(record, index, date_class) is not None:
+            index += 4
+            continue
+        value = record[index]
+        if (
+            isinstance(value, int)
+            and value > len(strings)
+            and index + 1 < len(record)
+            and record[index + 1] == integer_class
+        ):
+            return None
+        if not isinstance(value, int) or value <= 0 or value > len(strings):
+            index += 1
+            continue
+        text = _string_from_table(strings, value)
+        if text is None or text.startswith(("java.", "se.", "[L")):
+            index += 1
+            continue
+        return text
+    return None
+
+
+def _parse_encoded_event_record(record, strings, *, date_class, timestamp_class):
+    if len(record) < 11:
+        return None
+    event_class = _encoded_class_ref(strings, "se.tempus.common.shared.wrapper.CalendarEvent/")
+    date_offset = 3 if len(record) >= 3 and record[:3] == [0, event_class, 0] else 1
+    # CalendarEvent serializes stopDate before startDate in the observed HomeService payload.
+    stop_date = _encoded_date(record, date_offset, date_class)
+    start_date = _encoded_date(record, date_offset + 4, date_class)
+    if stop_date is None and start_date is None:
+        return None
+    if start_date is None:
+        start_date = stop_date
+    if stop_date is None:
+        stop_date = start_date
+    timestamp_index = next(
+        (
+            index
+            for index, value in enumerate(record)
+            if value == timestamp_class and index >= date_offset + 8 and index + 1 < len(record)
+        ),
+        None,
+    )
+    if timestamp_index is None:
+        return None
+    message = _human_string_from_table(strings, record[timestamp_index + 1])
+    if message is None:
+        return None
+    event_id = None
+    if timestamp_index + 3 < len(record) and record[timestamp_index + 2] == 0:
+        candidate_id = record[timestamp_index + 3]
+        if isinstance(candidate_id, int) and candidate_id > len(strings):
+            event_id = candidate_id
+    if event_id is None:
+        return None
+    scheduling_index = date_offset + 8
+    scheduling_allowed = (
+        record[scheduling_index]
+        if len(record) > scheduling_index and record[scheduling_index] in (0, 1)
+        else None
+    )
+    integer_class = _encoded_class_ref(strings, "java.lang.Integer/")
+    description = _encoded_event_text(
+        strings,
+        record,
+        date_class,
+        integer_class,
+        start=timestamp_index + 4,
+    )
+    return {
+        "id": str(event_id),
+        "message": message,
+        "description": description or None,
+        "start_date": start_date,
+        "stop_date": stop_date,
+        "scheduling_allowed": bool(scheduling_allowed) if scheduling_allowed is not None else None,
+    }
+
+
+def _encoded_child_contexts(prefix, strings, *, child_class, enrollment_class):
+    contexts = []
+    for marker in (
+        index
+        for index, value in enumerate(prefix)
+        if value == child_class
+    ):
+        candidates = []
+        for start in range(max(0, marker - 1000), max(0, marker - 3)):
+            if prefix[start : start + 2] != [0, 0]:
+                continue
+            child_id = prefix[start + 2]
+            name = _human_string_from_table(strings, prefix[start + 3])
+            if isinstance(child_id, int) and child_id > len(strings) and name:
+                candidates.append((start, name))
+        if not candidates:
+            continue
+        start, child = candidates[-1]
+        unit = None
+        if enrollment_class is not None:
+            for index in range(start, marker):
+                if prefix[index] == enrollment_class and index + 1 < marker:
+                    candidate_unit = _human_string_from_table(strings, prefix[index + 1])
+                    if candidate_unit:
+                        unit = candidate_unit
+                        break
+        if unit is None:
+            for value in prefix[start:marker]:
+                candidate_unit = _human_string_from_table(strings, value)
+                if candidate_unit and re.match(r"^\d{2}\s+", candidate_unit):
+                    unit = candidate_unit
+                    break
+        context = {"start": marker, "child": child, "unit": unit}
+        if context not in contexts:
+            contexts.append(context)
+    return contexts
+
+
+def _parse_encoded_upcoming_events(data):
+    if not isinstance(data, list):
+        return []
+    string_table_index, strings = _encoded_string_table(data)
+    if string_table_index is None:
+        return []
+    event_class = _encoded_class_ref(strings, "se.tempus.common.shared.wrapper.CalendarEvent/")
+    date_class = _encoded_class_ref(strings, "se.tempus.common.date.DateOnly/")
+    timestamp_class = _encoded_class_ref(strings, "java.sql.Timestamp/")
+    child_class = _encoded_class_ref(strings, "se.tempus.common.shared.wrapper.HomeChild/")
+    enrollment_class = _encoded_class_ref(strings, "se.tempus.common.shared.wrapper.Enrollment/")
+    if event_class is None or date_class is None or timestamp_class is None:
+        return []
+    prefix = data[:string_table_index]
+    rows = []
+    contexts = (
+        _encoded_child_contexts(
+            prefix,
+            strings,
+            child_class=child_class,
+            enrollment_class=enrollment_class,
+        )
+        if child_class is not None
+        else []
+    )
+    if not contexts:
+        contexts = [{"start": 0, "child": None, "unit": None}]
+    for position, context in enumerate(contexts):
+        end = contexts[position + 1]["start"] if position + 1 < len(contexts) else len(prefix)
+        for record in _encoded_event_records(prefix, event_class, date_class, start=context["start"], end=end):
+            event = _parse_encoded_event_record(
+                record,
+                strings,
+                date_class=date_class,
+                timestamp_class=timestamp_class,
+            )
+            if event is None:
+                continue
+            event["child"] = context["child"]
+            event["unit"] = context["unit"]
+            rows.append(event)
+    return rows
+
+
+def _has_upcoming_overview_shape(data):
+    if isinstance(data, list):
+        _, strings = _encoded_string_table(data)
+        return any(value.startswith("se.limesaudio.tempushome.shared.wrappers.HomeOverviewData/") for value in strings)
+    return any(
+        "calendarEvents" in raw or "calendar_events" in raw
+        for raw in _walk_dicts(data)
+    )
 
 
 def _string_from_table(strings, ref):
@@ -434,6 +810,35 @@ def parse_children_and_notifications(response):
         rows.append({"id": str(child_id), "name": name})
     if not rows:
         raise RuntimeError("Tempus children response did not contain recognized child rows")
+    return rows
+
+
+def parse_upcoming_events(response):
+    if not response.startswith("//OK"):
+        raise RuntimeError("Tempus upcoming events response was not a successful GWT RPC response")
+    data = _json_payload(response)
+    if data is None:
+        raise RuntimeError("Tempus upcoming events response could not be parsed")
+    if data == []:
+        return []
+
+    rows = list(_extract_upcoming_events(data))
+    if not rows:
+        rows = _parse_encoded_upcoming_events(data)
+    if not rows:
+        if _has_upcoming_overview_shape(data):
+            return []
+        raise RuntimeError("Tempus upcoming events response did not contain recognized event data")
+    rows.sort(
+        key=lambda row: (
+            row.get("start_date") or "",
+            row.get("stop_date") or "",
+            row.get("child") or "",
+            row.get("unit") or "",
+            row.get("message") or "",
+            row.get("id") or "",
+        )
+    )
     return rows
 
 

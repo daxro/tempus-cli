@@ -8,6 +8,7 @@ from tempus_cli.gwt import (
     TEMPUS_HOME_URL,
     payload_assign_pickup_for_date,
     payload_get_children_and_notifications,
+    payload_get_home_overview_data,
     payload_get_pickup_date_assignment,
     payload_get_pickups,
     payload_get_schemas,
@@ -45,6 +46,7 @@ def test_blocks_write_like_rpc():
     [
         "getPickups",
         "getChildrenAndNotifications",
+        "getHomeOverviewData",
         "getWeekSchedules",
         "authenticateUserWithCookies",
         "heartbeat",

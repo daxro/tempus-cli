@@ -81,6 +81,30 @@ def test_children_and_notifications_authenticates_then_reads(monkeypatch):
     assert calls == ["authenticateUserWithCookies", "getChildrenAndNotifications"]
 
 
+def test_upcoming_events_authenticates_then_reads(monkeypatch):
+    calls = []
+
+    class FakeTransport:
+        def __init__(self, session):
+            pass
+
+        def post_rpc(self, url, payload, headers=None, **kwargs):
+            calls.append(rpc_method_from_payload(payload))
+            if calls[-1] == "authenticateUserWithCookies":
+                return DummyResponse("//OK[]")
+            return DummyResponse(
+                '//OK[{"children":[{"name":"Generated Child","departmentName":"02 Bävern"}],'
+                '"calendarEvents":[{"id":123,"message":"Midsommarafton","startDate":"2026-06-19",'
+                '"stopDate":"2026-06-19","schedulingAllowed":false}]}]'
+            )
+
+    monkeypatch.setattr(api_module, "ReadOnlyTempusTransport", FakeTransport)
+    api = api_module.TempusApi(session=object(), permutation="P")
+
+    assert api.upcoming_events()[0]["message"] == "Midsommarafton"
+    assert calls == ["authenticateUserWithCookies", "getHomeOverviewData"]
+
+
 def test_assign_pickup_uses_update_schedule_write_transport(monkeypatch):
     calls = []
 

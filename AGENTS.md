@@ -26,10 +26,11 @@ Run the focused tests for changed behavior before the full suite.
 
 ## Command Interface
 
-Working commands are `status`, `setup`, `schemas`, `providers`, `login`, and `pickup`.
+Working commands are `status`, `setup`, `schemas`, `providers`, `login`, `upcoming-events`, and `pickup`.
 
 - Human-readable output is the default.
 - Read commands and `pickup` support `--json`.
+- `upcoming-events` is read-only and must not store snapshots, diff events, or manage notification state.
 - `TEMPUS_PERSONNUMMER` remains the compatibility environment variable for non-interactive setup.
 - `--no-input` must disable all prompting.
 

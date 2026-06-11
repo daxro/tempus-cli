@@ -1,0 +1,31 @@
+{
+  "entries": [
+    {
+      "request": {
+        "body": "7|0|4|https://home.tempusinfo.se/tempusHome/tempusHome/|PERMUTATION|se.limesaudio.tempushome.client.HomeService|getHomeOverviewData|1|2|3|4|0|",
+        "gwt_rpc_method": "getHomeOverviewData",
+        "headers": [],
+        "method": "POST",
+        "url": "https://home.tempusinfo.se/tempusHome/tempusHome/service"
+      },
+      "response": {
+        "body": "//OK[0,0,7187,50,39,47,27,1,8,0,2026,6,19,12,2026,6,19,12,0,0,0,920000000,\"opaque\",11,10,0,5718,5,0,0,7].concat([0,3,0,2026,8,14,12,2026,6,22,12,1,2026,4,28,12,2026,4,20,12,940000000,\"opaque2\",11,16,0,7609,5,1,2026,4,13,12,9,[\"se.limesaudio.tempushome.shared.wrappers.HomeOverviewData/[SANITIZED]\",\"java.util.TreeSet/[SANITIZED]\",\"se.tempus.common.shared.wrapper.CalendarEvent/[SANITIZED]\",\"generated@example.test\",\"java.lang.Integer/[SANITIZED]\",\"Generated Owner\",\"\",\"java.util.ArrayList/[SANITIZED]\",\"Generated description\",\"Midsommarafton\",\"java.sql.Timestamp/[SANITIZED]\",\"se.tempus.common.date.DateOnly/[SANITIZED]\",\"generated-owner@example.test\",\"Generated Reviewer\",\"Generated description 2\",\"Sommarförskola 2026\",\"generated-reviewer@example.test\",\"Generated Author\",\"APT - förskolan stänger 15.45\",\"Generated closed event\",\"Generated closed event lower case\",\"Generated holiday\",\"Generated holiday 2\",\"Generated holiday 3\",\"Generated holiday 4\",\"Generated holiday 5\",\"se.tempus.common.shared.wrapper.HomeChild/[SANITIZED]\",\"java.util.HashMap/[SANITIZED]\",\"se.tempus.common.shared.wrapper.ScheduleWindowCollection/[SANITIZED]\",\"se.tempus.common.shared.wrapper.ScheduleWindowConnection/[SANITIZED]\",\"se.tempus.common.shared.wrapper.SharedScheduleWindowWeekData/[SANITIZED]\",\"se.tempus.common.date.TimeSpan/[SANITIZED]\",\"se.tempus.common.date.TimeOnly/[SANITIZED]\",\"se.tempus.common.shared.wrapper.DefaultScheduleWindow/[SANITIZED]\",\"Generated Staff\",\"se.tempus.common.shared.wrapper.Schedulation/[SANITIZED]\",\"se.tempus.common.shared.wrapper.EnrollmentWrapper/[SANITIZED]\",\"Generated Previous Unit\",\"se.tempus.common.shared.wrapper.Enrollment/[SANITIZED]\",\"se.tempus.common.date.DateSpan/[SANITIZED]\",\"java.util.Arrays$ArrayList/[SANITIZED]\",\"java.lang.String/[SANITIZED]\",\"Generated enrollment token\",\"Generated phone\",\"Generated School\",\"se.tempus.common.shared.wrapper.enums.SchoolType/[SANITIZED]\",\"Generated Unit\",\"Generated enrollment token 2\",\"Generated phone 2\",\"Generated Child\",\"Generated Surname\"],0,7])",
+        "headers": [],
+        "status": 200
+      }
+    }
+  ],
+  "fixture_type": "tempus_upcoming_events_capture",
+  "observed": {
+    "argument_order": [],
+    "argument_types": [],
+    "child_and_unit_source": "HomeChild and Enrollment fields in overview response",
+    "date_representation": "DateOnly year/month/day tuples",
+    "event_cardinality": "one row per child/unit event association",
+    "server_filtered_to_upcoming_rows": true,
+    "single_day_stop_date": "equal DateOnly tuple",
+    "wire_format": "GWT //OK array with .concat continuation"
+  },
+  "scope": "upcoming_events",
+  "version": 1
+}

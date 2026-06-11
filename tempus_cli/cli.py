@@ -34,6 +34,7 @@ def build_parser():
         epilog="""examples:
   tempus status --json
   tempus schemas --area Stockholm --json
+  tempus upcoming-events --json
   tempus pickup --json
   tempus setup --personnummer YYYYMMDDNNNN
 
@@ -100,6 +101,24 @@ safety:
     )
     login_parser.add_argument("--no-input", action="store_true", help="Disable prompts; require environment or saved config")
     login_parser.add_argument("--freja-timeout", type=float, default=180.0, help="Seconds to wait for Freja approval (default: 180)")
+
+    upcoming_events = sub.add_parser(
+        "upcoming-events",
+        help="List upcoming overview events",
+        description="List upcoming child and unit events visible from the Tempus overview.",
+        epilog="""examples:
+  tempus upcoming-events
+  tempus upcoming-events --json
+  tempus upcoming-events --child CHILD_NAME --json
+
+safety:
+  read-only
+  does not save event snapshots or track event changes""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    upcoming_events.add_argument("--json", dest="json_output", action="store_true", help="Output stable JSON")
+    upcoming_events.add_argument("--no-input", action="store_true", help="Disable prompts; require saved session or environment")
+    upcoming_events.add_argument("--child", help="Filter to this child name")
 
     pickup = sub.add_parser(
         "pickup",
@@ -273,6 +292,67 @@ def _print_pickups(pickups):
         suffix = f" ({children})" if children else ""
         phone = f" {pickup.get('phone')}" if pickup.get("phone") else ""
         _print_public(f"{pickup.get('id')}: {pickup.get('name')}{phone}{suffix}")
+
+
+def _public_upcoming_event(event):
+    return {
+        "child": event.get("child"),
+        "unit": event.get("unit"),
+        "id": event.get("id"),
+        "message": event.get("message"),
+        "description": event.get("description"),
+        "start_date": event.get("start_date"),
+        "stop_date": event.get("stop_date"),
+        "scheduling_allowed": event.get("scheduling_allowed"),
+    }
+
+
+def _resolve_child_name(children, child_name):
+    wanted = _validate_non_empty(child_name, "--child")
+    wanted_lower = wanted.lower()
+    names = [
+        str(child.get("name") or "").strip()
+        for child in children
+        if isinstance(child, dict) and str(child.get("name") or "").strip()
+    ]
+    exact = [name for name in names if name.lower() == wanted_lower]
+    if exact:
+        if len(exact) > 1:
+            raise ValueError(f"child '{wanted}' matched multiple names")
+        return exact[0]
+    partial = [name for name in names if wanted_lower in name.lower()]
+    if not partial:
+        raise ValueError(f"child '{wanted}' not found")
+    if len(partial) > 1:
+        raise ValueError(f"child '{wanted}' matched multiple names")
+    return partial[0]
+
+
+def _print_upcoming_events(events):
+    if not events:
+        _print_public("No upcoming events found.")
+        return
+    for event in events:
+        start_date = event.get("start_date") or ""
+        stop_date = event.get("stop_date") or start_date
+        dates = start_date if start_date == stop_date else f"{start_date} - {stop_date}"
+        description = f" - {event.get('description')}" if event.get("description") else ""
+        _print_public(
+            f"{dates} | {event.get('child')} | {event.get('unit')} | {event.get('message')}{description}"
+        )
+
+
+def _upcoming_events(args):
+    api = _get_authenticated_api(no_input=args.no_input)
+    rows = [_public_upcoming_event(event) for event in api.upcoming_events()]
+    if args.child is not None:
+        resolved_child = _resolve_child_name(api.children_and_notifications(), args.child)
+        rows = [row for row in rows if str(row.get("child") or "").lower() == resolved_child.lower()]
+    if args.json_output:
+        _print_json(rows)
+    else:
+        _print_upcoming_events(rows)
+    return 0
 
 
 def _get_authenticated_api(no_input=False):
@@ -788,6 +868,9 @@ def _run_command(parser, args):
         login(personnummer=personnummer, freja_timeout=args.freja_timeout, allow_prompt=False)
         print("Login verified. Session was not saved.")
         return 0
+
+    if args.command == "upcoming-events":
+        return _upcoming_events(args)
 
     if args.command == "pickup":
         return _pickup(args)

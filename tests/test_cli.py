@@ -31,7 +31,7 @@ def test_help_lists_only_working_commands(capsys):
     assert "usage: tempus" in out
 
     subparsers = next(action for action in build_parser()._actions if hasattr(action, "choices") and action.choices)
-    assert set(subparsers.choices) == {"status", "setup", "schemas", "providers", "login", "pickup"}
+    assert set(subparsers.choices) == {"status", "setup", "schemas", "providers", "login", "upcoming-events", "pickup"}
 
 
 def test_status_runs(capsys):
@@ -390,6 +390,134 @@ class FakePickupApi:
     def assign_pickup(self, assignment):
         self.writes.append(assignment)
         return self.write_response
+
+
+class FakeUpcomingEventsApi:
+    def __init__(self, rows=None, children=None):
+        self.rows = rows if rows is not None else [
+            {
+                "child": "Generated Child",
+                "unit": "02 Bävern",
+                "id": "123",
+                "message": "Midsommarafton",
+                "description": None,
+                "start_date": "2026-06-19",
+                "stop_date": "2026-06-19",
+                "scheduling_allowed": False,
+            },
+            {
+                "child": "Generated Sibling",
+                "unit": "02 Bävern",
+                "id": "124",
+                "message": "Sommarförskola 2026",
+                "description": "Generated description",
+                "start_date": "2026-06-22",
+                "stop_date": "2026-08-14",
+                "scheduling_allowed": True,
+            },
+        ]
+        self.children = children if children is not None else [
+            {"id": "101", "name": "Generated Child"},
+            {"id": "102", "name": "Generated Sibling"},
+        ]
+
+    def upcoming_events(self):
+        return self.rows
+
+    def children_and_notifications(self):
+        return self.children
+
+
+def test_upcoming_events_json_has_stable_shape(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakeUpcomingEventsApi())
+
+    assert main(["upcoming-events", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == FakeUpcomingEventsApi().rows
+
+
+def test_upcoming_events_filters_exact_child_match(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakeUpcomingEventsApi())
+
+    assert main(["upcoming-events", "--child", "generated child", "--json"]) == 0
+    assert [row["child"] for row in json.loads(capsys.readouterr().out)] == ["Generated Child"]
+
+
+def test_upcoming_events_filters_partial_child_match(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakeUpcomingEventsApi())
+
+    assert main(["upcoming-events", "--child", "sib", "--json"]) == 0
+    assert [row["child"] for row in json.loads(capsys.readouterr().out)] == ["Generated Sibling"]
+
+
+def test_upcoming_events_unknown_child_fails(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakeUpcomingEventsApi())
+
+    assert main(["upcoming-events", "--child", "Unknown", "--json"]) == 2
+    assert "child 'Unknown' not found" in capsys.readouterr().err
+
+
+def test_upcoming_events_ambiguous_child_fails(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    api = FakeUpcomingEventsApi(children=[{"id": "101", "name": "Generated Child"}, {"id": "102", "name": "Generated Sibling"}])
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: api)
+
+    assert main(["upcoming-events", "--child", "generated", "--json"]) == 2
+    assert "matched multiple names" in capsys.readouterr().err
+
+
+def test_upcoming_events_duplicate_exact_child_names_remain_ambiguous(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    api = FakeUpcomingEventsApi(children=[{"id": "101", "name": "Generated Child"}, {"id": "102", "name": "Generated Child"}])
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: api)
+
+    assert main(["upcoming-events", "--child", "Generated Child", "--json"]) == 2
+    assert "matched multiple names" in capsys.readouterr().err
+
+
+def test_upcoming_events_valid_child_without_events_returns_empty_list(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    api = FakeUpcomingEventsApi(rows=[], children=[{"id": "101", "name": "Generated Child"}])
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: api)
+
+    assert main(["upcoming-events", "--child", "Generated Child", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_upcoming_events_no_input_is_forwarded(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    calls = []
+    monkeypatch.setattr(
+        cli_module,
+        "_get_authenticated_api",
+        lambda no_input=False: calls.append(no_input) or FakeUpcomingEventsApi(),
+    )
+
+    assert main(["upcoming-events", "--no-input", "--json"]) == 0
+    assert calls == [True]
+    assert json.loads(capsys.readouterr().out)
+
+
+def test_upcoming_events_human_output(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: FakeUpcomingEventsApi())
+
+    assert main(["upcoming-events"]) == 0
+    out = capsys.readouterr().out
+    assert "2026-06-19 | Generated Child | 02 Bävern | Midsommarafton" in out
+    assert "2026-06-22 - 2026-08-14 | Generated Sibling | 02 Bävern | Sommarförskola 2026 - Generated description" in out
 
 
 def test_pickup_list_json_has_stable_shape(monkeypatch, capsys):

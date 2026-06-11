@@ -9,6 +9,7 @@ from tempus_cli.gwt import (
     parse_pickup_assignment,
     parse_pickups,
     parse_schemas,
+    parse_upcoming_events,
     parse_week_schedule_assignment,
     payload_assign_pickup_for_date,
     payload_authenticate_user_with_cookies,
@@ -16,6 +17,7 @@ from tempus_cli.gwt import (
     payload_get_pickup_date_assignment,
     payload_get_grand_id_identity_providers,
     payload_get_pickups,
+    payload_get_home_overview_data,
     payload_get_schemas,
     payload_get_week_schedules,
     payload_heartbeat,
@@ -26,10 +28,19 @@ from tempus_cli.gwt import (
 SCHEMAS = '//OK[14,938,13,2,12,727,11,2,10,399,9,2,8,275,7,2,6,23,5,2,4,20,3,2,6,1,["java.util.ArrayList/4159755760","se.tempus.common.shared.wrapper.Schema/2582274289","Sandsborgs Montessori","tempus-sandsborgsm","Miro Kids","tempus-stockholm-miro-kids","Katarina Barnstugeförening","tempus-stockholm-katarina","Stockholms stad","tempus-stockholm","Framtidsfolket Cosmos","tempus-stockholm-framtidsfolket","Stockholms stad OB","tempus-stockholm-ob"],0,7]'
 PROVIDERS = '//OK[0,3,5,4,3,0,2,1,1,["java.util.ArrayList/4159755760","se.tempus.common.shared.grandid.SelectableGrandIdIdp/2371313207","Stockholm-inlogg","se.tempus.common.shared.login.LoginOption/2533300465","STOCKHOLM_PROD"],0,7]'
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pickup_date_assignment"
+UPCOMING_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "upcoming_events"
 
 
 def _fixture(name):
     return json.loads((FIXTURE_DIR / name).read_text(encoding="utf-8"))
+
+
+def _upcoming_fixture(name):
+    return json.loads((UPCOMING_FIXTURE_DIR / name).read_text(encoding="utf-8"))
+
+
+def _upcoming_entry(name):
+    return _upcoming_fixture(name)["entries"][0]
 
 
 def _normalize_permutation(payload):
@@ -40,6 +51,7 @@ def test_payloads_match_observed_shape():
     assert payload_get_schemas("P", 12) == '7|0|5|https://home.tempusinfo.se/tempusHome/tempusHome/|P|se.limesaudio.tempushome.client.HomeService|getSchemas|I|1|2|3|4|1|5|12|'
     assert "getGrandIdIdentityProviders" in payload_get_grand_id_identity_providers("P", 399)
     assert "getPickups" in payload_get_pickups("P")
+    assert _normalize_permutation(payload_get_home_overview_data("P")) == _upcoming_entry("home_overview_data.json")["request"]["body"]
     assert payload_heartbeat("P") == '7|0|4|https://home.tempusinfo.se/tempusHome/tempusHome/|P|se.limesaudio.tempushome.client.HomeService|heartbeat|1|2|3|4|0|'
     assert "removePickup" in payload_remove_pickup("P", 123)
 
@@ -50,6 +62,96 @@ def test_authenticate_user_with_cookies_payload_matches_observed_shape():
         "se.limesaudio.tempushome.client.HomeService|authenticateUserWithCookies|Z|"
         "1|2|3|4|2|5|5|0|0|"
     )
+
+
+def test_parse_upcoming_events_from_sanitized_fixture():
+    fixture = _upcoming_fixture("home_overview_data.json")
+    assert parse_upcoming_events(fixture["entries"][0]["response"]["body"]) == [
+        {
+            "child": "Generated Child",
+            "unit": "Generated Unit",
+            "id": "5718",
+            "message": "Midsommarafton",
+            "description": None,
+            "start_date": "2026-06-19",
+            "stop_date": "2026-06-19",
+            "scheduling_allowed": False,
+        },
+        {
+            "child": "Generated Child",
+            "unit": "Generated Unit",
+            "id": "7609",
+            "message": "Sommarförskola 2026",
+            "description": "Generated description",
+            "start_date": "2026-06-22",
+            "stop_date": "2026-08-14",
+            "scheduling_allowed": True,
+        },
+    ]
+
+
+def test_upcoming_events_fixture_documents_observed_wire_shape():
+    fixture = _upcoming_fixture("home_overview_data.json")
+    observed = fixture["observed"]
+    assert fixture["entries"][0]["request"]["gwt_rpc_method"] == "getHomeOverviewData"
+    assert observed["argument_order"] == []
+    assert observed["server_filtered_to_upcoming_rows"] is True
+    assert observed["date_representation"] == "DateOnly year/month/day tuples"
+    assert observed["single_day_stop_date"] == "equal DateOnly tuple"
+
+
+def test_parse_upcoming_events_normalizes_missing_stop_date():
+    response = '//OK[{"child":{"name":"Generated Child","departmentName":"02 Bävern"},"calendarEvents":[{"id":123,"message":"Single day","startDate":"2026-06-19","schedulingAllowed":false}]}]'
+    assert parse_upcoming_events(response) == [
+        {
+            "child": "Generated Child",
+            "unit": "02 Bävern",
+            "id": "123",
+            "message": "Single day",
+            "description": None,
+            "start_date": "2026-06-19",
+            "stop_date": "2026-06-19",
+            "scheduling_allowed": False,
+        }
+    ]
+
+
+def test_parse_upcoming_events_does_not_expose_hidden_metadata():
+    response = (
+        '//OK[{"child":{"name":"Generated Child","departmentName":"Generated Unit"},'
+        '"calendarEvents":[{"id":123,"message":"Single day","startDate":"2026-06-19",'
+        '"schedulingAllowed":false,"changedById":999,"changedByName":"Generated Author",'
+        '"changedByEmail":"generated@example.test","modified":"2026-06-01",'
+        '"conditionsText":"Generated conditions","timeSpan":"Generated span"}]}]'
+    )
+    assert set(parse_upcoming_events(response)[0]) == {
+        "child",
+        "unit",
+        "id",
+        "message",
+        "description",
+        "start_date",
+        "stop_date",
+        "scheduling_allowed",
+    }
+
+
+def test_parse_upcoming_events_accepts_empty_overview_wrapper():
+    response = '//OK[0,1,["se.limesaudio.tempushome.shared.wrappers.HomeOverviewData/1725352340"],0,7]'
+    assert parse_upcoming_events(response) == []
+
+
+def test_parse_upcoming_events_does_not_confuse_november_with_timestamp_class():
+    response = _upcoming_entry("home_overview_data.json")["response"]["body"].replace(
+        "2026,6,19,12,2026,6,19,12",
+        "2026,11,12,12,2026,11,12,12",
+    )
+    assert any(row["start_date"] == "2026-11-12" for row in parse_upcoming_events(response))
+
+
+def test_parse_upcoming_events_fails_closed_for_non_ok_response():
+    with pytest.raises(RuntimeError, match="successful GWT RPC response"):
+        parse_upcoming_events("<html>login</html>")
     assert payload_authenticate_user_with_cookies("P", use_nu_cookie=True, use_bearer_auth=True).endswith("|1|1|")
 
 
