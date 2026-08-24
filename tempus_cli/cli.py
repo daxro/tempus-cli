@@ -1,5 +1,5 @@
 import argparse
-from datetime import date
+from datetime import date, timedelta
 import getpass
 import json
 import os
@@ -10,21 +10,25 @@ import tempfile
 import requests
 
 from . import __version__
-from .api import PICKUP_CONTACT_WRITES_DISABLED, TempusApi
 from .errors import FrejaError, TempusError
+from .home_client import HomeTempusApi as TempusApi
 from .paths import default_config_path, default_session_path
 from .redact import redact_text
 from .session import (
-    login,
+    login_home_api,
     read_config_personnummer,
     resolve_personnummer,
-    status_text,
     validate_personnummer,
-    verify_authenticated,
 )
-from .session_store import load_session_opt_in, save_session_opt_in
+from .token_store import load_token, save_token, session_lock
 
 AREA_IDS = {"stockholm": 12}
+PICKUP_WRITES_DISABLED = (
+    "Home API pickup writes require reviewed sanitized POST /schedules fixtures before --apply can be enabled"
+)
+PICKUP_CONTACT_WRITES_DISABLED = (
+    "pickup contact writes require sanitized Home API write fixtures and review before --apply can be enabled"
+)
 
 
 def build_parser():
@@ -120,6 +124,30 @@ safety:
     upcoming_events.add_argument("--no-input", action="store_true", help="Disable prompts; require saved session or environment")
     upcoming_events.add_argument("--child", help="Filter to this child name")
 
+    def add_common_read(name, help_text, *, dates=False, since=False, child=False):
+        command = sub.add_parser(name, help=help_text, description=help_text + ".")
+        command.add_argument("--json", dest="json_output", action="store_true", help="Output stable JSON")
+        command.add_argument("--no-input", action="store_true", help="Disable prompts; require a saved Home API session")
+        if dates:
+            command.add_argument("--from", dest="start_date", help="Inclusive start date (YYYY-MM-DD)")
+            command.add_argument("--to", dest="stop_date", help="Inclusive stop date (YYYY-MM-DD)")
+        if since:
+            command.add_argument("--since", help="Return content since this date (YYYY-MM-DD)")
+        if child:
+            command.add_argument("--child", help="Filter to this child name")
+        return command
+
+    add_common_read("schedules", "List child schedules", dates=True, child=True)
+    add_common_read("attendance", "List recorded attendance", dates=True, child=True)
+    add_common_read("absences", "List absence reports", dates=True, child=True)
+    add_common_read("calendar-events", "List calendar events", dates=True, child=True)
+    add_common_read("messages", "List messages", since=True)
+    add_common_read("blog-posts", "List blog posts", since=True)
+    add_common_read("todos", "List action items", child=True)
+    add_common_read("meetings", "List meeting invitations and reservations", child=True)
+    add_common_read("reviews", "List reviews and questionnaires", child=True)
+    add_common_read("calendar-link", "Check calendar-link configuration")
+
     pickup = sub.add_parser(
         "pickup",
         help="List contacts, read date pickups, or preview guarded pickup changes",
@@ -193,13 +221,13 @@ def _write_config_personnummer(personnummer, path=None):
     _write_private_text(path, f"TEMPUS_PERSONNUMMER={personnummer}\n")
 
 
-def _persist_setup_state(personnummer, session, *, config_path=None, session_path=None):
+def _persist_setup_state(personnummer, token, *, config_path=None, session_path=None):
     config_path = config_path or default_config_path()
     session_path = session_path or default_session_path()
     previous_config = config_path.read_text() if config_path.exists() else None
     try:
         _write_config_personnummer(personnummer, config_path)
-        save_session_opt_in(session, session_path)
+        save_token(session_path, token)
     except Exception:
         if previous_config is None:
             config_path.unlink(missing_ok=True)
@@ -231,13 +259,15 @@ def _status_dict(config_path=None, session_path=None):
     }
     if not session_path.exists():
         return status
-    session = TempusApi().session
-    if not load_session_opt_in(session, session_path):
-        status["session"] = "unreadable"
+    token, session_state = load_token(session_path)
+    if not token:
+        status["session"] = "persisted" if session_state == "legacy" else session_state
+        if session_state == "legacy":
+            status["reason"] = "Legacy Tempus cookie session; run tempus setup to create a Home API session"
         return status
     status["session"] = "persisted"
     try:
-        verify_authenticated(session)
+        TempusApi(token_path=session_path).initialize()
         status["authenticated"] = True
     except Exception as exc:
         status["reason"] = redact_text(str(exc))
@@ -355,13 +385,98 @@ def _upcoming_events(args):
     return 0
 
 
+def _date_range(args, *, historical=False, event_window=False):
+    today = date.today()
+    default_start = today - timedelta(days=30) if historical else today
+    default_stop = today + timedelta(days=90 if event_window else 30) if not historical else today
+    start = _parse_cli_date(args.start_date, "--from") if args.start_date else default_start
+    stop = _parse_cli_date(args.stop_date, "--to") if args.stop_date else default_stop
+    if start > stop:
+        raise ValueError("--from must not be after --to")
+    if (stop - start).days > 365:
+        raise ValueError("date range must not exceed 366 days")
+    return start.isoformat(), stop.isoformat()
+
+
+def _parse_cli_date(value, flag):
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        raise ValueError(f"{flag} must be a valid YYYY-MM-DD date")
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{flag} must be a valid YYYY-MM-DD date") from exc
+
+
+def _filter_rows_by_child(api, rows, child_name):
+    if child_name is None:
+        return rows
+    resolved = _resolve_child_name(api.children_and_notifications(), child_name)
+    return [row for row in rows if str(row.get("child") or "").lower() == resolved.lower()]
+
+
+def _read_rows(args):
+    date_range = None
+    since = None
+    if args.command == "schedules":
+        date_range = _date_range(args)
+    elif args.command in {"attendance", "absences"}:
+        date_range = _date_range(args, historical=True)
+    elif args.command == "calendar-events":
+        date_range = _date_range(args, event_window=True)
+    elif args.command in {"messages", "blog-posts"}:
+        since = (
+            _parse_cli_date(args.since, "--since").isoformat()
+            if args.since
+            else (date.today() - timedelta(days=30)).isoformat()
+        )
+
+    api = _get_authenticated_api(no_input=args.no_input)
+    if args.command == "schedules":
+        start, stop = date_range
+        rows = api.schedules(start, stop)
+    elif args.command == "attendance":
+        start, stop = date_range
+        rows = api.attendance(start, stop)
+    elif args.command == "absences":
+        start, stop = date_range
+        rows = api.absences(start, stop)
+    elif args.command == "calendar-events":
+        start, stop = date_range
+        rows = api.calendar_events(start, stop)
+    elif args.command in {"messages", "blog-posts"}:
+        rows = api.messages(since) if args.command == "messages" else api.blog_posts(since)
+    elif args.command == "todos":
+        rows = api.todos()
+    elif args.command == "meetings":
+        rows = api.meetings()
+    elif args.command == "reviews":
+        rows = api.reviews()
+    else:
+        raise RuntimeError("Unknown Home API read command")
+    if hasattr(args, "child"):
+        rows = _filter_rows_by_child(api, rows, args.child)
+    if args.json_output:
+        _print_json(_public_result(rows))
+    elif not rows:
+        _print_public(f"No {args.command.replace('-', ' ')} found.")
+    else:
+        for row in _public_result(rows):
+            _print_public(json.dumps(row, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
 def _get_authenticated_api(no_input=False):
-    api = TempusApi()
-    if load_session_opt_in(api.session, default_session_path()):
-        return api
+    session_path = default_session_path()
+    token, _state = load_token(session_path)
+    if token:
+        return TempusApi(token_path=session_path)
+    if no_input:
+        raise RuntimeError("Tempus Home API session is missing or expired; run tempus setup")
     personnummer = resolve_personnummer(allow_prompt=not no_input)
-    session = login(personnummer=personnummer, allow_prompt=False)
-    return TempusApi(session=session)
+    token = login_home_api(personnummer=personnummer, allow_prompt=False)
+    with session_lock(session_path):
+        save_token(session_path, token)
+    return TempusApi(token_path=session_path)
 
 
 def _validate_pickup_id(value):
@@ -811,16 +926,16 @@ def _setup(args):
             return
 
     personnummer = _resolve_setup_personnummer(args.personnummer, no_input=args.no_input)
-    session = login(
+    token = login_home_api(
         personnummer=personnummer,
         quiet=args.quiet,
         freja_timeout=args.freja_timeout,
         allow_prompt=False,
     )
-    _persist_setup_state(personnummer, session, config_path=config_path, session_path=session_path)
+    _persist_setup_state(personnummer, token, config_path=config_path, session_path=session_path)
     if not args.quiet:
         print("Authenticated and saved local session.", file=sys.stderr)
-    print(status_text())
+    _print_status(_status_dict(config_path=config_path, session_path=session_path))
 
 
 def _run_command(parser, args):
@@ -865,7 +980,7 @@ def _run_command(parser, args):
 
     if args.command == "login":
         personnummer = resolve_personnummer(allow_prompt=not args.no_input)
-        login(personnummer=personnummer, freja_timeout=args.freja_timeout, allow_prompt=False)
+        login_home_api(personnummer=personnummer, freja_timeout=args.freja_timeout, allow_prompt=False)
         print("Login verified. Session was not saved.")
         return 0
 
@@ -874,6 +989,27 @@ def _run_command(parser, args):
 
     if args.command == "pickup":
         return _pickup(args)
+
+    if args.command in {
+        "schedules",
+        "attendance",
+        "absences",
+        "calendar-events",
+        "messages",
+        "blog-posts",
+        "todos",
+        "meetings",
+        "reviews",
+    }:
+        return _read_rows(args)
+
+    if args.command == "calendar-link":
+        result = _get_authenticated_api(no_input=args.no_input).calendar_link()
+        if args.json_output:
+            _print_json(result)
+        else:
+            _print_public(f"configured: {'yes' if result['configured'] else 'no'}")
+        return 0
 
     parser.print_help()
     return 0

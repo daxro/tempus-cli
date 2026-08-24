@@ -1,0 +1,1 @@
+{"reservations":[{"reservationId":1301,"childId":101,"departmentId":701,"meeting":{"meetingId":1300,"title":"Example meeting"},"slot":{"date":"2026-09-02","startTime":32400000,"stopTime":34200000},"privateForMe":false}],"invitations":[{"childId":101,"departmentId":701,"meeting":{"meetingId":1302,"title":"Example invitation"},"slot":null,"privateForMe":false}]}

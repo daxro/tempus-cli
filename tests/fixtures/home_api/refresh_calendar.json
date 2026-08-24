@@ -1,0 +1,11 @@
+{
+  "newJwt": {"token": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+  "children": [{"childId": 101, "firstName": "Example", "lastName": "Child", "enrollments": [{"enrollmentId": 601, "departmentId": 701, "enrollmentStart": "2025-08-01", "enrollmentStop": "2027-07-31"}]}],
+  "departments": [{"departmentId": 701, "departmentName": "Example Unit"}],
+  "pickups": [{"pickupId": 201, "name": "Example Guardian", "childIds": [101]}],
+  "schedules": {"requestedDates": {"startDate": "2026-08-24", "stopDate": "2026-09-03"}, "schedules": [{"childId": 101, "schedules": [{"date": "2026-08-25", "scheduleTimes": [{"scheduleTimeId": 401, "enrollmentId": 601, "startTime": 28800000, "stopTime": 57600000}], "pickupId": 201, "arrivingAlone": false, "departingAlone": false}]}]},
+  "absences": {"requestedDates": {"startDate": "2026-08-24", "stopDate": "2026-09-03"}, "absences": [{"childId": 101, "reports": [{"date": "2026-08-24", "allDayAbsence": true, "absenceTimes": [{"absenceId": 901, "startTime": null, "stopTime": null, "message": "Generated fixture", "absenceCategoryName": "Example category"}]}]}]},
+  "attendances": {"attendance": [{"childId": 101, "attendance": [{"date": "2026-08-24", "attendanceTimes": [{"attendanceTimeId": 801, "enrollmentId": 601, "startTime": 29100000, "stopTime": 57300000}]}]}]},
+  "calendarEvents": {"calendarEvents": [{"calendarEventId": 501, "departmentIds": [701], "title": "Example event", "description": "Generated fixture", "startDate": "2026-09-02", "stopDate": "2026-09-03", "locked": false}]},
+  "verifications": {"changes": []}
+}

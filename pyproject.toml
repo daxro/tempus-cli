@@ -11,6 +11,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
+    "filelock>=3.16.0",
     "requests>=2.31.0",
     "platformdirs>=4.0.0",
     "stockholm-freja @ git+https://github.com/daxro/stockholm-freja.git@master",

@@ -11,7 +11,11 @@ def test_redacts_personnummer_and_tokens_and_cookies():
 
 
 def test_redacts_sensitive_query_values():
-    out = redact_text("https://x/y?SAMLTRANSACTIONID=abc&schemaId=399&keep=ok")
+    out = redact_text(
+        "https://x/y?SAMLTRANSACTIONID=abc&schemaId=399&authTokenCookieValue=secret&keep=ok"
+    )
     assert "SAMLTRANSACTIONID=%5BREDACTED%5D" in out
     assert "schemaId=%5BREDACTED%5D" in out
+    assert "authTokenCookieValue=%5BREDACTED%5D" in out
+    assert "secret" not in out
     assert "keep=ok" in out

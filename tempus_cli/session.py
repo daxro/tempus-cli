@@ -7,6 +7,7 @@ from urllib.parse import urlencode, urljoin
 
 from .api import TempusApi, new_session
 from .freja import freja_login
+from .home_api import HomeApiClient, validate_home_api_login_url
 from .paths import default_config_path, default_session_path
 from .redact import redact_text
 from .session_store import load_session_opt_in
@@ -15,6 +16,12 @@ from stockholm_freja import FrejaInputError, validate_personnummer as validate_f
 
 HTTP_TIMEOUT = 30
 REDIRECT_CODES = (301, 302, 303, 307, 308)
+
+
+_POST_MESSAGE_PATTERNS = (
+    re.compile(r"(?:window\.)?ReactNativeWebView\.postMessage\(\s*'([^'\r\n]{16,8192})'\s*\)"),
+    re.compile(r'(?:window\.)?ReactNativeWebView\.postMessage\(\s*"([^"\r\n]{16,8192})"\s*\)'),
+)
 
 
 def _client(session_or_transport):
@@ -77,6 +84,18 @@ def find_freja_link(html):
     if "Inloggningen misslyckades" in html or "BankID/federerad inloggning" in html:
         raise RuntimeError("Tempus login endpoint returned an upstream login failure before Stockholm/Freja")
     raise RuntimeError("Could not find Freja/BankID link on Stockholm login page")
+
+
+def parse_home_api_auth_token(html):
+    matches = []
+    for pattern in _POST_MESSAGE_PATTERNS:
+        matches.extend(pattern.findall(html or ""))
+    if len(matches) != 1:
+        raise RuntimeError("Tempus Home API login did not return exactly one authentication token")
+    token = unescape(matches[0])
+    if any(character.isspace() for character in token):
+        raise RuntimeError("Tempus Home API login returned a malformed authentication token")
+    return token
 
 
 def stockholm_login_url(schema_id, provider_option="STOCKHOLM_PROD", origin=None):
@@ -149,6 +168,47 @@ def login(personnummer=None, session=None, quiet=False, freja_timeout=180.0, all
     handle_saml_chain(transport, resp.text, resp.url)
     api.authenticate_user_with_cookies()
     return session
+
+
+def login_home_api(personnummer=None, session=None, quiet=False, freja_timeout=180.0, allow_prompt=True):
+    personnummer = resolve_personnummer(personnummer, allow_prompt=allow_prompt)
+    session = session or new_session()
+    client = HomeApiClient()
+    schemas = client.schemas(12)
+    stockholm = next((row for row in schemas if row.get("name") == "Stockholms stad"), None)
+    if not stockholm or int(stockholm.get("id") or 0) != 399:
+        raise RuntimeError("Could not verify the Stockholms stad Home API destination")
+    options = client.login_options(stockholm["id"])
+    option = next((row for row in options if row.get("clientEnum") == "STOCKHOLM_PROD"), None)
+    if not option or not option.get("url"):
+        raise RuntimeError("Could not find Stockholm-inlogg Home API login option")
+    login_url = validate_home_api_login_url(option["url"], destination_id=stockholm["id"])
+
+    transport = ReadOnlyTempusTransport(session)
+    response = follow_redirects(transport, transport.get(login_url, allow_redirects=False, timeout=HTTP_TIMEOUT))
+    html, page_url = handle_saml_chain(transport, response.text, response.url)
+    freja_url = urljoin(page_url, find_freja_link(html))
+    freja_page = follow_redirects(transport, transport.get(freja_url, allow_redirects=False, timeout=HTTP_TIMEOUT))
+    freja_login(
+        session,
+        freja_page.url,
+        personnummer,
+        timeout=freja_timeout,
+        on_started=(
+            None
+            if quiet
+            else lambda: print("Approve the login in Freja eID+.", file=sys.stderr, flush=True)
+        ),
+    )
+    response = follow_redirects(
+        transport,
+        transport.get(freja_page.url, allow_redirects=False, timeout=HTTP_TIMEOUT),
+    )
+    html, _ = handle_saml_chain(transport, response.text, response.url)
+    auth_token = parse_home_api_auth_token(html)
+    client.exchange_saml_token(auth_token)
+    client.initialize()
+    return client.token
 
 
 def verify_login_return(session):

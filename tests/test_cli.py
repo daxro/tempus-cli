@@ -9,6 +9,7 @@ from tempus_cli.cli import build_parser, main
 from tempus_cli.gwt import parse_assignment_write_response, parse_pickup_assignment
 
 TEST_PERSONNUMMER = "0" * 12
+FAKE_TOKEN = "x" * 64
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pickup_date_assignment"
 
 
@@ -31,7 +32,11 @@ def test_help_lists_only_working_commands(capsys):
     assert "usage: tempus" in out
 
     subparsers = next(action for action in build_parser()._actions if hasattr(action, "choices") and action.choices)
-    assert set(subparsers.choices) == {"status", "setup", "schemas", "providers", "login", "upcoming-events", "pickup"}
+    assert set(subparsers.choices) == {
+        "status", "setup", "schemas", "providers", "login", "upcoming-events", "pickup",
+        "schedules", "attendance", "absences", "calendar-events", "messages", "blog-posts",
+        "todos", "meetings", "reviews", "calendar-link",
+    }
 
 
 def test_status_runs(capsys):
@@ -64,22 +69,43 @@ def test_status_json_has_stable_shape(monkeypatch, capsys, tmp_path):
     }
 
 
+def test_status_reports_legacy_cookie_session_without_prompt(monkeypatch, capsys, tmp_path):
+    from tempus_cli import cli as cli_module
+
+    config_file = tmp_path / "config.env"
+    session_file = tmp_path / "session.json"
+    config_file.write_text(f"TEMPUS_PERSONNUMMER={TEST_PERSONNUMMER}\n")
+    session_file.write_text("[]")
+    monkeypatch.setattr(cli_module, "default_config_path", lambda: config_file)
+    monkeypatch.setattr(cli_module, "default_session_path", lambda: session_file)
+    monkeypatch.setattr(
+        cli_module,
+        "login_home_api",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("login called")),
+    )
+
+    assert main(["status", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["session"] == "persisted"
+    assert data["authenticated"] is False
+    assert data["reason"] == "Legacy Tempus cookie session; run tempus setup to create a Home API session"
+
+
 def test_setup_no_input_uses_env_writes_config_and_saves_session(monkeypatch, capsys, tmp_path):
     from tempus_cli import cli as cli_module
 
     config_file = tmp_path / "config.env"
     session_file = tmp_path / "session.json"
-    fake_session = object()
     calls = {}
     monkeypatch.setenv("TEMPUS_PERSONNUMMER", TEST_PERSONNUMMER)
     monkeypatch.setattr(cli_module, "default_config_path", lambda: config_file)
     monkeypatch.setattr(cli_module, "default_session_path", lambda: session_file)
     monkeypatch.setattr(
         cli_module,
-        "login",
-        lambda **kwargs: calls.update(login=kwargs) or fake_session,
+        "login_home_api",
+        lambda **kwargs: calls.update(login=kwargs) or FAKE_TOKEN,
     )
-    monkeypatch.setattr(cli_module, "save_session_opt_in", lambda session, path: calls.update(session=session, path=path))
+    monkeypatch.setattr(cli_module, "save_token", lambda path, token: calls.update(token=token, path=path))
 
     assert main(["setup", "--no-input", "-q"]) == 0
 
@@ -91,7 +117,7 @@ def test_setup_no_input_uses_env_writes_config_and_saves_session(monkeypatch, ca
             "freja_timeout": 180.0,
             "allow_prompt": False,
         },
-        "session": fake_session,
+        "token": FAKE_TOKEN,
         "path": session_file,
     }
     assert capsys.readouterr().err == ""
@@ -105,7 +131,7 @@ def test_no_input_requires_personnummer_before_login(monkeypatch, capsys, tmp_pa
     calls = []
     monkeypatch.delenv("TEMPUS_PERSONNUMMER", raising=False)
     monkeypatch.setattr(session_module, "default_config_path", lambda: tmp_path / "missing.env")
-    monkeypatch.setattr(cli_module, "login", lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(cli_module, "login_home_api", lambda **kwargs: calls.append(kwargs))
 
     assert main([command, "--no-input"]) == 2
     captured = capsys.readouterr()
@@ -120,7 +146,7 @@ def test_setup_does_not_write_config_when_login_fails(monkeypatch, tmp_path):
     config_file = tmp_path / "config.env"
     monkeypatch.setenv("TEMPUS_PERSONNUMMER", TEST_PERSONNUMMER)
     monkeypatch.setattr(cli_module, "default_config_path", lambda: config_file)
-    monkeypatch.setattr(cli_module, "login", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("login failed")))
+    monkeypatch.setattr(cli_module, "login_home_api", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("login failed")))
 
     assert main(["setup", "--no-input", "-q"]) == 1
     assert not config_file.exists()
@@ -139,17 +165,16 @@ def test_setup_explicit_personnummer_wins_over_env(monkeypatch, capsys, tmp_path
 
     config_file = tmp_path / "config.env"
     session_file = tmp_path / "session.json"
-    fake_session = object()
     calls = {}
     monkeypatch.setenv("TEMPUS_PERSONNUMMER", "1" * 12)
     monkeypatch.setattr(cli_module, "default_config_path", lambda: config_file)
     monkeypatch.setattr(cli_module, "default_session_path", lambda: session_file)
     monkeypatch.setattr(
         cli_module,
-        "login",
-        lambda **kwargs: calls.update(login=kwargs) or fake_session,
+        "login_home_api",
+        lambda **kwargs: calls.update(login=kwargs) or FAKE_TOKEN,
     )
-    monkeypatch.setattr(cli_module, "save_session_opt_in", lambda session, path: calls.update(session=session, path=path))
+    monkeypatch.setattr(cli_module, "save_token", lambda path, token: calls.update(token=token, path=path))
 
     assert main(["setup", "--personnummer", "2" * 12, "-q"]) == 0
 
@@ -166,8 +191,8 @@ def test_setup_explicit_personnummer_works_with_no_input(monkeypatch, tmp_path):
     calls = {}
     monkeypatch.setattr(cli_module, "default_config_path", lambda: config_file)
     monkeypatch.setattr(cli_module, "default_session_path", lambda: session_file)
-    monkeypatch.setattr(cli_module, "login", lambda **kwargs: calls.update(login=kwargs) or object())
-    monkeypatch.setattr(cli_module, "save_session_opt_in", lambda session, path: None)
+    monkeypatch.setattr(cli_module, "login_home_api", lambda **kwargs: calls.update(login=kwargs) or FAKE_TOKEN)
+    monkeypatch.setattr(cli_module, "save_token", lambda path, token: None)
 
     assert main(["setup", "--personnummer", TEST_PERSONNUMMER, "--no-input", "-q"]) == 0
     assert calls["login"]["personnummer"] == TEST_PERSONNUMMER
@@ -181,8 +206,8 @@ def test_setup_prompts_when_tty_has_no_explicit_or_noninteractive_input(monkeypa
     monkeypatch.setattr(cli_module, "read_config_personnummer", lambda path=None: None)
     monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(cli_module.getpass, "getpass", lambda prompt: TEST_PERSONNUMMER)
-    monkeypatch.setattr(cli_module, "login", lambda **kwargs: object())
-    monkeypatch.setattr(cli_module, "save_session_opt_in", lambda session, path: None)
+    monkeypatch.setattr(cli_module, "login_home_api", lambda **kwargs: FAKE_TOKEN)
+    monkeypatch.setattr(cli_module, "save_token", lambda path, token: None)
 
     assert main(["setup", "-q"]) == 0
 
@@ -194,7 +219,7 @@ def test_setup_no_input_does_not_use_saved_config(monkeypatch, capsys, tmp_path)
     config_file.write_text(f"TEMPUS_PERSONNUMMER={TEST_PERSONNUMMER}\n")
     monkeypatch.delenv("TEMPUS_PERSONNUMMER", raising=False)
     monkeypatch.setattr(cli_module, "default_config_path", lambda: config_file)
-    monkeypatch.setattr(cli_module, "login", lambda **kwargs: (_ for _ in ()).throw(AssertionError("login called")))
+    monkeypatch.setattr(cli_module, "login_home_api", lambda **kwargs: (_ for _ in ()).throw(AssertionError("login called")))
 
     assert main(["setup", "--no-input"]) == 2
     assert "TEMPUS_PERSONNUMMER" in capsys.readouterr().err
@@ -211,7 +236,7 @@ def test_setup_decline_keeps_existing_state(monkeypatch, tmp_path):
     monkeypatch.setattr(cli_module, "default_session_path", lambda: session_file)
     monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda prompt: "n")
-    monkeypatch.setattr(cli_module, "login", lambda **kwargs: (_ for _ in ()).throw(AssertionError("login called")))
+    monkeypatch.setattr(cli_module, "login_home_api", lambda **kwargs: (_ for _ in ()).throw(AssertionError("login called")))
 
     assert main(["setup"]) == 0
     assert config_file.read_text() == f"TEMPUS_PERSONNUMMER={TEST_PERSONNUMMER}\n"
@@ -229,7 +254,7 @@ def test_setup_login_failure_keeps_existing_state(monkeypatch, tmp_path):
     monkeypatch.setattr(cli_module, "default_session_path", lambda: session_file)
     monkeypatch.setattr(
         cli_module,
-        "login",
+        "login_home_api",
         lambda **kwargs: (_ for _ in ()).throw(RuntimeError("login failed")),
     )
 
@@ -247,11 +272,11 @@ def test_setup_session_save_failure_keeps_existing_state(monkeypatch, tmp_path):
     session_file.write_text("[]")
     monkeypatch.setattr(cli_module, "default_config_path", lambda: config_file)
     monkeypatch.setattr(cli_module, "default_session_path", lambda: session_file)
-    monkeypatch.setattr(cli_module, "login", lambda **kwargs: object())
+    monkeypatch.setattr(cli_module, "login_home_api", lambda **kwargs: FAKE_TOKEN)
     monkeypatch.setattr(
         cli_module,
-        "save_session_opt_in",
-        lambda session, path: (_ for _ in ()).throw(RuntimeError("session save failed")),
+        "save_token",
+        lambda path, token: (_ for _ in ()).throw(RuntimeError("session save failed")),
     )
 
     assert main(["setup", "--personnummer", "2" * 12, "-q"]) == 1
@@ -1012,7 +1037,7 @@ def test_pickup_apply_is_gated_before_session(monkeypatch, capsys):
 
     assert main(["pickup", "--child", "Example Child", "--name", "Example Guardian", "--phone", "0700000000", "--apply", "--confirm"]) == 2
     assert calls == []
-    assert "pickup contact writes require sanitized Tempus write fixtures" in capsys.readouterr().err
+    assert "pickup contact writes require sanitized Home API write fixtures" in capsys.readouterr().err
 
 
 def test_pickup_target_not_found(monkeypatch, capsys):
@@ -1022,3 +1047,130 @@ def test_pickup_target_not_found(monkeypatch, capsys):
 
     assert main(["pickup", "--id", "123", "--phone", "0711111111", "--json"]) == 2
     assert "pickup contact 123 not found" in capsys.readouterr().err
+
+
+class FakeHomeReadApi:
+    def __init__(self):
+        self.calls = []
+
+    def children_and_notifications(self):
+        return [{"id": "101", "name": "Example Child"}]
+
+    def schedules(self, start, stop):
+        self.calls.append(("schedules", start, stop))
+        return [{"date": start, "child": "Example Child", "_raw": {"secret": "hidden"}}]
+
+    def attendance(self, start, stop):
+        self.calls.append(("attendance", start, stop))
+        return []
+
+    def absences(self, start, stop):
+        self.calls.append(("absences", start, stop))
+        return []
+
+    def calendar_events(self, start, stop):
+        self.calls.append(("calendar-events", start, stop))
+        return []
+
+    def messages(self, since):
+        self.calls.append(("messages", since))
+        return []
+
+    def blog_posts(self, since):
+        self.calls.append(("blog-posts", since))
+        return []
+
+    def todos(self):
+        self.calls.append(("todos",))
+        return []
+
+    def meetings(self):
+        self.calls.append(("meetings",))
+        return []
+
+    def reviews(self):
+        self.calls.append(("reviews",))
+        return []
+
+    def calendar_link(self):
+        self.calls.append(("calendar-link",))
+        return {"configured": True}
+
+
+def test_home_read_command_passes_dates_filters_child_and_hides_raw(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    api = FakeHomeReadApi()
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: api)
+
+    assert main([
+        "schedules", "--from", "2026-08-24", "--to", "2026-08-25",
+        "--child", "Example", "--json", "--no-input",
+    ]) == 0
+    assert json.loads(capsys.readouterr().out) == [{"date": "2026-08-24", "child": "Example Child"}]
+    assert api.calls == [("schedules", "2026-08-24", "2026-08-25")]
+
+
+@pytest.mark.parametrize(
+    "command,arguments,expected",
+    [
+        ("attendance", ["--from", "2026-08-01", "--to", "2026-08-24"], ("attendance", "2026-08-01", "2026-08-24")),
+        ("absences", ["--from", "2026-08-01", "--to", "2026-08-24"], ("absences", "2026-08-01", "2026-08-24")),
+        ("calendar-events", ["--from", "2026-08-24", "--to", "2026-09-01"], ("calendar-events", "2026-08-24", "2026-09-01")),
+        ("messages", ["--since", "2026-08-01"], ("messages", "2026-08-01")),
+        ("blog-posts", ["--since", "2026-08-01"], ("blog-posts", "2026-08-01")),
+        ("todos", [], ("todos",)),
+        ("meetings", [], ("meetings",)),
+        ("reviews", [], ("reviews",)),
+    ],
+)
+def test_home_read_commands_have_stable_empty_json(monkeypatch, capsys, command, arguments, expected):
+    from tempus_cli import cli as cli_module
+
+    api = FakeHomeReadApi()
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: api)
+    assert main([command, *arguments, "--json", "--no-input"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
+    assert api.calls == [expected]
+
+
+def test_calendar_link_exposes_only_configuration_state(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    api = FakeHomeReadApi()
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: api)
+    assert main(["calendar-link", "--json", "--no-input"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"configured": True}
+    assert api.calls == [("calendar-link",)]
+
+
+def test_invalid_home_date_range_fails_before_session(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    calls = []
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: calls.append(no_input))
+    assert main(["schedules", "--from", "2026-08-25", "--to", "2026-08-24", "--no-input"]) == 2
+    assert calls == []
+    assert "--from must not be after --to" in capsys.readouterr().err
+
+
+def test_non_hyphenated_home_date_fails_before_session(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    calls = []
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: calls.append(no_input))
+    assert main(["messages", "--since", "20260824", "--no-input"]) == 2
+    assert calls == []
+    assert "--since must be a valid YYYY-MM-DD date" in capsys.readouterr().err
+
+
+def test_home_date_range_is_at_most_366_inclusive_days(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    calls = []
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: calls.append(no_input))
+    assert main([
+        "schedules", "--from", "2026-01-01", "--to", "2027-01-02", "--no-input",
+    ]) == 2
+    assert calls == []
+    assert "date range must not exceed 366 days" in capsys.readouterr().err

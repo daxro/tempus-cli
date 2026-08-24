@@ -31,6 +31,8 @@ tempus setup --personnummer YYYYMMDDNNNN
 
 Approve the Freja eID+ request on your phone. Setup saves local config and session files outside the repository with `0600` permissions. It does not write Tempus data.
 
+Setup is normally a one-time login. The CLI stores the Tempus Home API session locally and persists the rolling replacement JWT returned by Tempus after authenticated reads. Run setup again only when `tempus status` reports that the session is missing, unreadable, or expired.
+
 Interactive setup remains available:
 
 ```bash
@@ -49,31 +51,40 @@ tempus providers --schema-id 399 --json
 tempus upcoming-events --json
 tempus upcoming-events --child CHILD_NAME --json
 tempus upcoming-events --child CHILD_NAME --json --no-input
+tempus schedules --from YYYY-MM-DD --to YYYY-MM-DD --json --no-input
+tempus attendance --from YYYY-MM-DD --to YYYY-MM-DD --json --no-input
+tempus absences --from YYYY-MM-DD --to YYYY-MM-DD --json --no-input
+tempus calendar-events --from YYYY-MM-DD --to YYYY-MM-DD --json --no-input
+tempus messages --since YYYY-MM-DD --json --no-input
+tempus blog-posts --since YYYY-MM-DD --json --no-input
+tempus todos --json --no-input
+tempus meetings --json --no-input
+tempus reviews --json --no-input
+tempus calendar-link --json --no-input
 tempus pickup --json
 tempus pickup --date YYYY-MM-DD --child CHILD_NAME --json
-tempus pickup --child CHILD_NAME --name "Example Guardian" --phone "0700000000" --json
 tempus pickup --date YYYY-MM-DD --child CHILD_NAME --name "Example Guardian" --json
 tempus login
 ```
 
-Human-readable output is the default. `status`, `schemas`, `providers`, `upcoming-events`, and `pickup` support stable JSON for scripts and agents.
+Human-readable output is the default. Read commands support stable JSON for scripts and agents. Date ranges are inclusive and limited to 366 days.
 
-`login` verifies the Freja login flow without saving a session. `status` verifies a persisted session with an authenticated pickup read without printing pickup data.
+`login` verifies the Freja login flow without saving a session. `status` verifies the persisted Home API JWT with `/init` without printing account data.
 
-`pickup` lists pickup contacts and previews guarded pickup contact changes. To check who picks up a child on a specific date, use `tempus pickup --date YYYY-MM-DD --child CHILD_NAME --json`. To assign an existing pickup contact for a date, add `--id PICKUP_ID` or `--name "Pickup Person"`. Preview is the default. Existing-contact date assignment can be applied with `--apply --confirm` after stale-state checks and post-write verification. Contact create, update, and remove remain disabled until sanitized Tempus write fixtures verify the exact GWT payloads.
+`pickup` lists pickup contacts and previews date assignments. To check who picks up a child on a specific date, use `tempus pickup --date YYYY-MM-DD --child CHILD_NAME --json`. To preview assigning an existing contact, add `--id PICKUP_ID` or `--name "Pickup Person"`. Home API writes remain blocked until reviewed sanitized `POST /schedules` fixtures verify the exact request and response; the CLI never falls back to the legacy web/GWT API.
 
 `upcoming-events` lists upcoming overview events by child and unit. It is read-only and intentionally does not store snapshots, detect changes, or track notification state. Its stable JSON rows contain `child`, `unit`, `id`, `message`, `description`, `start_date`, `stop_date`, and `scheduling_allowed`.
 
 ## Safety
 
-- Remote Tempus operations are read-only except explicitly confirmed pickup writes after fixture-backed enablement.
-- Unknown and write-like Tempus RPC methods are blocked centrally; pickup writes use a separate allowlist.
+- Remote Tempus operations are read-only. Pickup previews do not write.
+- Home API hosts, paths, query keys, response types, and response sizes are checked centrally. Unknown and write-like paths are blocked.
 - Session files, cookies, SAML values, query values, and token-like values must never be committed or shared.
 - Network access is restricted to HTTPS and an explicit host/path allowlist.
 
 ## Sanitized Pickup Fixtures
 
-Pickup date-assignment payload work must start from a sanitized capture, never raw production traffic. Save the browser or proxy capture outside the repository, then create a local replacement file outside the repository:
+Pickup date-assignment payload work must start from a sanitized Home API capture, never raw production traffic. Keep captures and replacement maps outside the repository and replace personal data with generated placeholders before adding a fixture.
 
 ```json
 {
@@ -82,13 +93,7 @@ Pickup date-assignment payload work must start from a sanitized capture, never r
 }
 ```
 
-Generate the fixture with:
-
-```bash
-uv run python -m tempus_cli.pickup_fixtures --input /path/outside/repo/raw.har --replacements /path/outside/repo/replacements.json --output tests/fixtures/pickup_date_assignment/assignment.har.json
-```
-
-Review the output before committing. It must contain generated placeholders only, no personal numbers, real names, cookies, sessions, SAML values, tokens, raw production traffic, or unredacted sensitive URLs. This sanitizer does not enable writes; date-assignment writes remain disabled until reviewed sanitized fixtures prove the exact GWT payloads.
+Review every fixture before committing. It must contain generated placeholders only: no personal numbers, real names, cookies, JWTs, SAML values, raw production traffic, or unredacted sensitive URLs. A fixture alone does not enable writes; tests must also prove request construction, the separate write allowlist, stale-state checks, and post-write verification.
 
 ## Agents
 

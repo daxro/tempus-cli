@@ -4,6 +4,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 SENSITIVE_QUERY_KEYS = {
     "samltransactionid", "smportalurl", "token", "code", "state",
     "schemaid", "origin", "target", "smagentname", "guid", "oauth_token",
+    "authtokencookievalue",
 }
 
 _PNR_RE = re.compile(r"(?<!\d)(?:\d{8}[-+]?\d{4}|\d{6}[-+]?\d{4})(?!\d)")

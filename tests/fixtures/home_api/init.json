@@ -1,0 +1,9 @@
+{
+  "newJwt": {"token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+  "children": [{"childId": 101, "firstName": "Example", "lastName": "Child", "enrollments": [{"enrollmentId": 601, "departmentId": 701, "enrollmentStart": "2025-08-01", "enrollmentStop": "2027-07-31"}]}],
+  "departments": [{"departmentId": 701, "departmentName": "Example Unit", "schoolName": "Example School"}],
+  "pickups": [{"pickupId": 201, "name": "Example Guardian", "phoneNumber": "0700000000", "childIds": [101]}],
+  "toDoList": [{"toDoId": 301, "title": "Example action", "description": "Generated fixture", "dueDate": "2026-09-01", "finished": false}],
+  "meetingData": {"invitations": [], "reservations": []},
+  "reviews": {"reviews": []}
+}
