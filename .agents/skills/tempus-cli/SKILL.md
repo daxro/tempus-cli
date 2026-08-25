@@ -15,7 +15,7 @@ compatibility: Requires the tempus command, network access to the allowlisted Te
 - Tell the user to approve the Freja eID+ request on their phone.
 - Never print, store in the repository, or return cookies, sessions, SAML values, or tokens.
 - Freja eID+ login always requires human approval.
-- `tempus setup` normally logs in once. The CLI rotates and saves Home API JWTs automatically; repeat setup only when status reports a missing, unreadable, or expired session.
+- Home API JWTs are short-lived. Supported authenticated reads rotate and save replacement JWTs during active use, but an expired JWT cannot refresh itself. Check `tempus status --json` before live reads; if the session is expired, run setup again and tell the user to approve Freja eID+.
 - Treat `tempus pickup` as read/preview-only. Home API writes are blocked pending reviewed sanitized fixtures; never use the legacy GWT API as a fallback.
 - Treat `tempus upcoming-events` as read-only. It does not store snapshots, detect changes, or manage notification state.
 - Treat exit code `2` as invalid or missing input, `1` as an operational failure, and `130` as interruption.

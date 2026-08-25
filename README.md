@@ -31,7 +31,7 @@ tempus setup --personnummer YYYYMMDDNNNN
 
 Approve the Freja eID+ request on your phone. Setup saves local config and session files outside the repository with `0600` permissions. It does not write Tempus data.
 
-Setup is normally a one-time login. The CLI stores the Tempus Home API session locally and persists the rolling replacement JWT returned by Tempus after authenticated reads. Run setup again only when `tempus status` reports that the session is missing, unreadable, or expired.
+The CLI stores the Tempus Home API session locally and persists replacement JWTs returned by supported authenticated reads. These JWTs are short-lived: active use can rotate them, but an expired JWT cannot refresh itself. Run `tempus status` before unattended use. If it reports an expired session, run setup again and approve a new Freja eID+ request.
 
 Interactive setup remains available:
 
