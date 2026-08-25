@@ -100,7 +100,8 @@ def _context(data):
         child_id = str(child_id)
         child_names[child_id] = _child_name(child)
         child_enrollments[child_id] = []
-        for enrollment in child.get("enrollments") or []:
+        enrollments = child.get("enrollments")
+        for enrollment in enrollments if isinstance(enrollments, list) else []:
             if not isinstance(enrollment, dict):
                 continue
             enrollment_id = _first(enrollment, "enrollmentId", "id")
@@ -415,12 +416,11 @@ def _normalize_content(data, kind, init_data=None):
         "reviews": ("reviews",),
     }[kind]
     if kind == "meetings" and isinstance(data, dict):
-        rows = [
-            row
-            for key in ("invitations", "reservations", "meetings")
-            for row in (data.get(key) or [])
-            if isinstance(row, dict)
-        ]
+        rows = []
+        for key in ("invitations", "reservations", "meetings"):
+            values = data.get(key)
+            if isinstance(values, list):
+                rows.extend(row for row in values if isinstance(row, dict))
     else:
         rows = [row for row in _list_at(data, *keys) if isinstance(row, dict)]
     child_names, _, _, department_names = _context(init_data or data)

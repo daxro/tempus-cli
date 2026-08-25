@@ -210,6 +210,22 @@ def test_sanitized_content_endpoint_fixtures_have_stable_shapes():
     assert normalize_calendar_link(fixture("calendar_link.json")) == {"configured": True}
 
 
+def test_meeting_normalizer_ignores_non_list_collections():
+    data = {
+        "invitations": True,
+        "reservations": {"id": "not-a-list"},
+        "meetings": "not-a-list",
+    }
+
+    assert _normalize_content(data, "meetings") == []
+
+
+def test_normalizers_ignore_non_list_child_enrollments():
+    data = {"children": [{"id": "101", "name": "Example Child", "enrollments": 1.5}]}
+
+    assert normalize_absences(data) == []
+
+
 def test_pickup_assignment_accepts_consistent_multi_department_rows():
     api = HomeTempusApi(token=TOKEN_A)
     api.schedules = lambda start, stop: [
