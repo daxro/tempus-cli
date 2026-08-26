@@ -31,7 +31,17 @@ tempus setup --personnummer YYYYMMDDNNNN
 
 Approve the Freja eID+ request on your phone. Setup saves local config and session files outside the repository with `0600` permissions. It does not write Tempus data.
 
-The CLI stores the Tempus Home API session locally and persists replacement JWTs returned by supported authenticated reads. These JWTs are short-lived: active use can rotate them, but an expired JWT cannot refresh itself. Run `tempus status` before unattended use. If it reports an expired session, run setup again and approve a new Freja eID+ request.
+The CLI stores the Tempus Home API session locally and persists replacement JWTs returned by supported authenticated reads. The current JWT lifetime is 60 minutes: active use can rotate a JWT, but an expired JWT cannot refresh itself. Run `tempus status` before unattended use. If it reports an expired session, run setup again and approve a new Freja eID+ request.
+
+### Keep an unattended session active
+
+On a machine that stays awake and online, cron can run `status` often enough to rotate the JWT before it expires. Find the absolute executable path with `command -v tempus`, then add this entry with `crontab -e`, replacing the example path:
+
+```cron
+*/55 * * * * /absolute/path/to/tempus status --json >/dev/null 2>&1
+```
+
+This cron expression runs at minutes 0 and 55, so the maximum gap is 55 minutes. Cron does not catch up missed runs: if the machine sleeps, is offline, or the command fails long enough for the JWT to expire, run setup again and approve Freja eID+.
 
 Interactive setup remains available:
 
