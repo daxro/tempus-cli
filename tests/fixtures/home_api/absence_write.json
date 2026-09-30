@@ -1,0 +1,33 @@
+{
+  "request": [
+    {
+      "childId": 101,
+      "reports": [
+        {
+          "date": "2026-10-23",
+          "absenceTimes": [
+            {"startTime": 0, "stopTime": 1439, "messageFromParent": ""}
+          ]
+        }
+      ]
+    }
+  ],
+  "response": {"failedDates": 0, "dates": ["2026-10-23"], "failures": []},
+  "readback": {
+    "requestedDates": {"startDate": "2026-10-23", "stopDate": "2026-10-23"},
+    "absences": [
+      {
+        "childId": 101,
+        "reports": [
+          {
+            "date": "2026-10-23",
+            "allDayAbsence": true,
+            "absenceTimes": [
+              {"absenceId": 901, "startTime": null, "stopTime": null, "messageFromParent": "", "absenceCategoryName": null}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

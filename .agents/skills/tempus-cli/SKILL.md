@@ -18,6 +18,7 @@ compatibility: Requires the tempus command, network access to the allowlisted Te
 - Home API JWTs currently have a 60-minute lifetime. Supported authenticated reads rotate and save replacement JWTs during active use, but an expired JWT cannot refresh itself. Check `tempus status --json` before live reads; if the session is expired, run setup again and tell the user to approve Freja eID+.
 - For an explicitly requested unattended keep-alive, use the absolute `tempus` executable path in a `*/55 * * * * /absolute/path/to/tempus status --json` cron entry, suppress command output, preserve existing crontab entries, and test the command with cron's minimal environment. Explain that the expression runs at minutes 0 and 55 (a maximum 55-minute gap) and that missed runs while asleep or offline are not replayed.
 - Treat `tempus pickup` as read/preview-only. Home API writes are blocked pending reviewed sanitized fixtures; never use the legacy GWT API as a fallback.
+- `tempus report-absence` previews a full-day report. Save only when the user explicitly asks for that child and date using `--apply --confirm`, then verify with `tempus absences`.
 - Treat `tempus upcoming-events` as read-only. It does not store snapshots, detect changes, or manage notification state.
 - Treat exit code `2` as invalid or missing input, `1` as an operational failure, and `130` as interruption.
 - For pickup date-assignment research, keep raw captures and replacement maps outside the repository. Commit only reviewed Home API fixtures containing generated placeholders.
@@ -34,6 +35,8 @@ tempus upcoming-events --child CHILD_NAME --json --no-input
 tempus schedules --from YYYY-MM-DD --to YYYY-MM-DD --json --no-input
 tempus attendance --from YYYY-MM-DD --to YYYY-MM-DD --json --no-input
 tempus absences --from YYYY-MM-DD --to YYYY-MM-DD --json --no-input
+tempus report-absence --child CHILD_NAME --from YYYY-MM-DD --json --no-input
+tempus report-absence --child CHILD_NAME --from YYYY-MM-DD --apply --confirm --json --no-input
 tempus calendar-events --from YYYY-MM-DD --to YYYY-MM-DD --json --no-input
 tempus messages --since YYYY-MM-DD --json --no-input
 tempus blog-posts --since YYYY-MM-DD --json --no-input

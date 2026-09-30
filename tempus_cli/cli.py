@@ -148,6 +148,19 @@ safety:
     add_common_read("reviews", "List reviews and questionnaires", child=True)
     add_common_read("calendar-link", "Check calendar-link configuration")
 
+    absence = sub.add_parser(
+        "report-absence",
+        help="Preview or create a full-day absence report",
+        description="Preview a full-day absence for one child and date range; use --apply --confirm to save it.",
+    )
+    absence.add_argument("--child", required=True, help="Child name")
+    absence.add_argument("--from", dest="start_date", required=True, help="First local date (YYYY-MM-DD)")
+    absence.add_argument("--to", dest="stop_date", help="Last local date (defaults to --from)")
+    absence.add_argument("--apply", action="store_true", help="Save the absence report")
+    absence.add_argument("--confirm", action="store_true", help="Required together with --apply")
+    absence.add_argument("--json", dest="json_output", action="store_true", help="Output stable JSON")
+    absence.add_argument("--no-input", action="store_true", help="Disable prompts; require a saved session")
+
     pickup = sub.add_parser(
         "pickup",
         help="List contacts, read date pickups, or preview guarded pickup changes",
@@ -463,6 +476,79 @@ def _read_rows(args):
         for row in _public_result(rows):
             _print_public(json.dumps(row, ensure_ascii=False, sort_keys=True))
     return 0
+
+
+def _report_absence(args):
+    if args.apply != args.confirm:
+        raise ValueError("saving an absence requires --apply --confirm together")
+    start = _parse_cli_date(args.start_date, "--from")
+    stop = _parse_cli_date(args.stop_date, "--to") if args.stop_date else start
+    if stop < start:
+        raise ValueError("--from must not be after --to")
+    if (stop - start).days > 365:
+        raise ValueError("date range must not exceed 366 days")
+    dates = [(start + timedelta(days=offset)).isoformat() for offset in range((stop - start).days + 1)]
+    api = _get_authenticated_api(no_input=args.no_input)
+    children = api.children_and_notifications()
+    name = _resolve_child_name(children, args.child)
+    child = next(row for row in children if row["name"] == name)
+
+    def existing_reports():
+        return [
+            row for row in api.absences(dates[0], dates[-1])
+            if str(row.get("child") or "").lower() == name.lower()
+            and row.get("start_date") <= dates[-1]
+            and row.get("stop_date") >= dates[0]
+        ]
+
+    existing = existing_reports()
+    result = {
+        "mode": "preview",
+        "child": {"id": child["id"], "name": name},
+        "start_date": dates[0],
+        "stop_date": dates[-1],
+        "all_day": True,
+        "existing_absences": _public_result(existing),
+        "write_performed": False,
+        "would_write_if_applied": not existing,
+        "blocked": bool(existing),
+        "block_reason": "already_reported" if existing else None,
+        "verification": None,
+    }
+    exit_code = 0
+    if args.apply:
+        result["mode"] = "apply"
+        if existing:
+            result["blocked"] = True
+            result["block_reason"] = "already_reported"
+            result["would_write_if_applied"] = False
+            exit_code = 1
+        else:
+            response = api.report_absence(child["id"], dates)
+            result["write_performed"] = True
+            failed_dates = response.get("failedDates") if isinstance(response, dict) else None
+            verified = existing_reports()
+            matched_dates = {
+                day for day in dates
+                if any(row.get("start_date") <= day <= row.get("stop_date") and row.get("all_day") for row in verified)
+            }
+            matched = failed_dates == 0 and len(matched_dates) == len(dates)
+            result["verification"] = {"matched": matched, "matched_dates": sorted(matched_dates)}
+            result["would_write_if_applied"] = False
+            if not matched:
+                exit_code = 1
+    if args.json_output:
+        _print_json(result)
+    else:
+        _print_public(f"{name}: {dates[0]}" + (f" to {dates[-1]}" if len(dates) > 1 else ""))
+        _print_public("full-day absence: " + ("saved and verified" if result["verification"] and result["verification"]["matched"] else "preview"))
+        if result["blocked"]:
+            _print_public(f"blocked: {result['block_reason']}")
+        elif not args.apply:
+            _print_public("Use --apply --confirm to save this report.")
+        elif exit_code:
+            _print_public("Saved report could not be verified; check tempus absences before retrying.")
+    return exit_code
 
 
 def _get_authenticated_api(no_input=False):
@@ -989,6 +1075,9 @@ def _run_command(parser, args):
 
     if args.command == "pickup":
         return _pickup(args)
+
+    if args.command == "report-absence":
+        return _report_absence(args)
 
     if args.command in {
         "schedules",

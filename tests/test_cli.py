@@ -36,6 +36,7 @@ def test_help_lists_only_working_commands(capsys):
         "status", "setup", "schemas", "providers", "login", "upcoming-events", "pickup",
         "schedules", "attendance", "absences", "calendar-events", "messages", "blog-posts",
         "todos", "meetings", "reviews", "calendar-link",
+        "report-absence",
     }
 
 
@@ -1095,6 +1096,62 @@ class FakeHomeReadApi:
     def calendar_link(self):
         self.calls.append(("calendar-link",))
         return {"configured": True}
+
+
+class FakeAbsenceApi:
+    def __init__(self, existing=None):
+        self.rows = list(existing or [])
+        self.writes = []
+
+    def children_and_notifications(self):
+        return [{"id": "101", "name": "Example Child"}]
+
+    def absences(self, start, stop):
+        return list(self.rows)
+
+    def report_absence(self, child_id, dates):
+        self.writes.append((child_id, dates))
+        self.rows = [
+            {"child": "Example Child", "start_date": day, "stop_date": day, "all_day": True}
+            for day in dates
+        ]
+        return {"failedDates": 0, "dates": dates, "failures": []}
+
+
+def test_report_absence_previews_then_applies_and_verifies(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    api = FakeAbsenceApi()
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: api)
+    arguments = ["report-absence", "--child", "Example", "--from", "2026-10-23", "--json", "--no-input"]
+    assert main(arguments) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["would_write_if_applied"] is True
+    assert preview["write_performed"] is False
+    assert api.writes == []
+
+    assert main([*arguments, "--apply", "--confirm"]) == 0
+    applied = json.loads(capsys.readouterr().out)
+    assert api.writes == [("101", ["2026-10-23"])]
+    assert applied["verification"] == {"matched": True, "matched_dates": ["2026-10-23"]}
+    assert applied["write_performed"] is True
+
+
+def test_report_absence_blocks_duplicate_and_requires_both_flags(monkeypatch, capsys):
+    from tempus_cli import cli as cli_module
+
+    api = FakeAbsenceApi([{
+        "child": "Example Child", "start_date": "2026-10-23",
+        "stop_date": "2026-10-23", "all_day": True,
+    }])
+    monkeypatch.setattr(cli_module, "_get_authenticated_api", lambda no_input=False: api)
+    arguments = ["report-absence", "--child", "Example", "--from", "2026-10-23", "--json", "--no-input"]
+    assert main([*arguments, "--apply"]) == 2
+    assert "--apply --confirm" in capsys.readouterr().err
+    assert main([*arguments, "--apply", "--confirm"]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["blocked"] is True
+    assert api.writes == []
 
 
 def test_home_read_command_passes_dates_filters_child_and_hides_raw(monkeypatch, capsys):

@@ -39,6 +39,7 @@ _READ_PATHS = _PUBLIC_PATHS + (
     re.compile(rf"/tempusHomeApi/v1/review/{_DATE}/{_DATE}"),
     re.compile(r"/tempusHomeApi/v1/calendarlink"),
 )
+_ABSENCE_WRITE_PATH = "/tempusHomeApi/v1/absenceReports"
 
 
 class HomeApiAuthenticationRequired(TempusError):
@@ -86,6 +87,31 @@ class HomeApiTransport:
             )
         except requests.exceptions.RequestException as exc:
             raise wrap_network_error(exc, "Tempus Home API GET") from exc
+        return self._read_json_response(response)
+
+    def post_absence(self, body, *, token):
+        if not token:
+            raise HomeApiAuthenticationRequired("No Tempus Home API session; run tempus setup")
+        url = HOME_API_BASE + "/absenceReports"
+        parsed = urlsplit(url)
+        if (parsed.scheme, parsed.hostname, parsed.port, parsed.path, parsed.query, parsed.fragment) != (
+            "https", HOME_API_HOST, None, _ABSENCE_WRITE_PATH, "", ""
+        ):
+            raise SafetyError("Blocked non-allowlisted absence write URL")
+        try:
+            response = self.session.post(
+                url,
+                json=body,
+                headers={"Authorization": f"Bearer {token}"},
+                allow_redirects=False,
+                stream=True,
+                timeout=HTTP_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            raise wrap_network_error(exc, "Tempus Home API absence POST") from exc
+        return self._read_json_response(response)
+
+    def _read_json_response(self, response):
         try:
             if 300 <= response.status_code < 400:
                 raise SafetyError("Blocked unexpected Home API redirect")
@@ -199,6 +225,23 @@ class HomeApiClient:
         if not self.token:
             raise HomeApiAuthenticationRequired("No Tempus Home API session; run tempus setup")
         return self.transport.get_json(path, token=self.token)
+
+    def report_absence(self, child_id, dates):
+        if not isinstance(child_id, str) or not child_id.isascii() or not child_id.isdecimal() or int(child_id) <= 0:
+            raise ValueError("child ID must be a positive decimal ID")
+        if not isinstance(dates, list) or not 1 <= len(dates) <= 366:
+            raise ValueError("absence dates must contain 1 to 366 dates")
+        validated = [_validate_date(value) for value in dates]
+        if len(set(validated)) != len(validated):
+            raise ValueError("absence dates must be unique")
+        body = [{
+            "childId": int(child_id),
+            "reports": [
+                {"date": value, "absenceTimes": [{"startTime": 0, "stopTime": 1439, "messageFromParent": ""}]}
+                for value in validated
+            ],
+        }]
+        return self.transport.post_absence(body, token=self.token)
 
     def initialize(self):
         data = self.get("/init")

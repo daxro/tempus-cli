@@ -64,6 +64,8 @@ tempus upcoming-events --child CHILD_NAME --json --no-input
 tempus schedules --from YYYY-MM-DD --to YYYY-MM-DD --json --no-input
 tempus attendance --from YYYY-MM-DD --to YYYY-MM-DD --json --no-input
 tempus absences --from YYYY-MM-DD --to YYYY-MM-DD --json --no-input
+tempus report-absence --child CHILD_NAME --from YYYY-MM-DD --json --no-input
+tempus report-absence --child CHILD_NAME --from YYYY-MM-DD --apply --confirm --json --no-input
 tempus calendar-events --from YYYY-MM-DD --to YYYY-MM-DD --json --no-input
 tempus messages --since YYYY-MM-DD --json --no-input
 tempus blog-posts --since YYYY-MM-DD --json --no-input
@@ -83,12 +85,14 @@ Human-readable output is the default. Read commands support stable JSON for scri
 
 `pickup` lists pickup contacts and previews date assignments. To check who picks up a child on a specific date, use `tempus pickup --date YYYY-MM-DD --child CHILD_NAME --json`. To preview assigning an existing contact, add `--id PICKUP_ID` or `--name "Pickup Person"`. Home API writes remain blocked until reviewed sanitized `POST /schedules` fixtures verify the exact request and response; the CLI never falls back to the legacy web/GWT API.
 
+`report-absence` previews a full-day absence for one child. Add `--to YYYY-MM-DD` for an inclusive range. Saving requires both `--apply` and `--confirm`; the CLI checks for existing reports and reads the saved report back.
+
 `upcoming-events` lists upcoming overview events by child and unit. It is read-only and intentionally does not store snapshots, detect changes, or track notification state. Its stable JSON rows contain `child`, `unit`, `id`, `message`, `description`, `start_date`, `stop_date`, and `scheduling_allowed`.
 
 ## Safety
 
-- Remote Tempus operations are read-only. Pickup previews do not write.
-- Home API hosts, paths, query keys, response types, and response sizes are checked centrally. Unknown and write-like paths are blocked.
+- Remote writes are limited to explicitly confirmed full-day absence reports. Pickup previews do not write.
+- Home API hosts, paths, query keys, response types, and response sizes are checked centrally. Unknown paths and other writes are blocked.
 - Session files, cookies, SAML values, query values, and token-like values must never be committed or shared.
 - Network access is restricted to HTTPS and an explicit host/path allowlist.
 

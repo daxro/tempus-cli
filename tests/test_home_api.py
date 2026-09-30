@@ -121,6 +121,41 @@ def test_transport_streams_and_bounds_json_response(monkeypatch):
     assert oversized.closed is True
 
 
+def test_absence_write_uses_separate_exact_path_and_fixture_payload():
+    fixture_data = fixture("absence_write.json")
+
+    class Response:
+        status_code = 200
+        headers = {"Content-Type": "application/json"}
+
+        def iter_content(self, chunk_size):
+            yield json.dumps(fixture_data["response"]).encode()
+
+        def close(self):
+            pass
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+            self.calls = []
+
+        def post(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            return Response()
+
+    session = Session()
+    client = HomeApiClient(token=TOKEN_A, transport=HomeApiTransport(session=session))
+    assert client.report_absence("101", ["2026-10-23"]) == fixture_data["response"]
+    url, kwargs = session.calls[0]
+    assert url == "https://homeapi.tempusinfo.se/tempusHomeApi/v1/absenceReports"
+    assert kwargs["json"] == fixture_data["request"]
+    assert kwargs["headers"] == {"Authorization": f"Bearer {TOKEN_A}"}
+    assert kwargs["allow_redirects"] is False
+    with pytest.raises(SafetyError, match="path"):
+        HomeApiTransport()._check_request(url)
+    assert normalize_absences(fixture_data["readback"], fixture("init.json"))[0]["all_day"] is True
+
+
 def test_token_store_is_versioned_0600_and_recognizes_legacy(tmp_path):
     path = tmp_path / "session.json"
     save_token(path, TOKEN_A)

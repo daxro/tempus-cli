@@ -359,7 +359,7 @@ def normalize_absences(data, init_data=None):
                         "start_time": _clock(_first(row, "startTime")),
                         "stop_time": _clock(_first(row, "stopTime", "endTime")),
                         "category": category,
-                        "message": _first(row, "message", "note"),
+                        "message": _first(row, "messageFromParent", "message", "note"),
                     }
                 )
     result.sort(key=lambda row: (row["start_date"], row.get("child") or ""))
@@ -651,6 +651,9 @@ class HomeTempusApi:
         init_data = self._init_data()
         data = self._authenticated(lambda client: client.get(f"/absenceReports/{start_date}/{stop_date}"))
         return normalize_absences(data, init_data)
+
+    def report_absence(self, child_id, dates):
+        return self._authenticated(lambda client: client.report_absence(child_id, dates))
 
     def calendar_events(self, start_date, stop_date):
         init_data = self._init_data()
