@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import date, datetime, timedelta
 from html import unescape
 import re
@@ -7,6 +8,8 @@ from zoneinfo import ZoneInfo
 from filelock import Timeout
 
 from .home_api import HomeApiAuthenticationRequired, HomeApiClient, HomeApiTransport
+from .pickup_write import apply_assignment, editability, pickup_body
+from .paths import config_dir
 from .token_store import load_token, save_token, session_lock
 
 
@@ -217,11 +220,11 @@ def normalize_calendar_events(data, init_data=None):
     return result
 
 
-def _clock(value):
+def _clock(value, *, minutes=False):
     if value is None:
         return None
     if isinstance(value, (int, float)):
-        total_minutes = int(value) // 60000
+        total_minutes = int(value) if minutes else int(value) // 60000
         return f"{total_minutes // 60:02d}:{total_minutes % 60:02d}"
     return str(value)[:5]
 
@@ -273,8 +276,8 @@ def normalize_schedules(data, init_data=None):
                 key = department_id
                 groups.setdefault(key, []).append(
                     {
-                        "start": _clock(_first(span, "startTime", "start", "from")),
-                        "stop": _clock(_first(span, "stopTime", "stop", "to", "end")),
+                        "start": _clock(_first(span, "startTime", "start", "from"), minutes=True),
+                        "stop": _clock(_first(span, "stopTime", "stop", "to", "end"), minutes=True),
                     }
                 )
             if not groups:
@@ -617,30 +620,29 @@ class HomeTempusApi:
         return normalize_schedules(data, init_data)
 
     def pickup_assignment(self, pickup_date, child_id):
-        rows = self.schedules(pickup_date, pickup_date)
+        context = self.refresh_calendar(pickup_date, pickup_date)
+        rows = normalize_schedules(context, context)
         matches = [row for row in rows if row.get("date") == pickup_date and str(row.get("child_id")) == str(child_id)]
         if not matches:
             raise RuntimeError("Tempus schedule response did not contain a matching child/date assignment")
-        pickup_ids = {(row.get("pickup") or {}).get("id") for row in matches}
-        if len(pickup_ids) != 1:
+        raw = deepcopy(matches[0].get("_raw") or {})
+        if any(row.get("_raw") != raw for row in matches):
             raise RuntimeError("Tempus schedule response contained conflicting child/date pickup assignments")
-        row = matches[0]
-        raw = row.get("_raw") or {}
-        pickup = row.get("pickup") or {}
-        schedule_id = _first(raw, "scheduleId", "id")
+        reason, editable_state = None, {}
+        try:
+            # Validate preservation even before the proposed contact is known.
+            pickup_body(raw, child_id, pickup_date, raw.get("pickupId") or 1)
+        except ValueError as exc:
+            reason = str(exc)
+        if reason is None:
+            reason, editable_state = editability(raw, context, pickup_date, child_id)
+        pickup_id = raw.get("pickupId")
         return {
-            "date": pickup_date,
-            "child_id": str(child_id),
-            "pickup_id": pickup.get("id"),
-            "assignment_id": str(schedule_id) if schedule_id is not None else None,
-            "version": _first(raw, "version"),
-            "write_token": None,
-            "write_supported": False,
-            "schedule_id": str(schedule_id) if schedule_id is not None else None,
-            "start_ms": None,
-            "end_ms": None,
-            "block_reason": "home_api_write_fixture_required",
-            "_raw": raw,
+            "date": pickup_date, "child_id": str(child_id),
+            "pickup_id": str(pickup_id) if pickup_id is not None else None,
+            "assignment_id": None, "version": None, "write_token": None,
+            "write_supported": reason is None, "block_reason": reason,
+            "_raw": raw, "_editability": editable_state,
         }
 
     def attendance(self, start_date, stop_date):
@@ -702,5 +704,10 @@ class HomeTempusApi:
         data = self._authenticated(lambda client: client.get("/calendarlink"))
         return normalize_calendar_link(data)
 
-    def assign_pickup(self, assignment):
-        raise RuntimeError("Home API pickup writes require sanitized POST /schedules fixtures")
+    def _post_pickup(self, body):
+        # _authenticated calls the operation once, with no authentication retry.
+        return self._authenticated(lambda client: client.transport.post_pickup(body, token=client.token))
+
+    def assign_pickup(self, assignment, contact, preview_token):
+        journal = (self.token_path.parent if self.token_path else config_dir()) / "pickup-writes.json"
+        return apply_assignment(self, assignment, contact, preview_token, journal)

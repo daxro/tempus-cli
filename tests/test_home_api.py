@@ -261,20 +261,6 @@ def test_normalizers_ignore_non_list_child_enrollments():
     assert normalize_absences(data) == []
 
 
-def test_pickup_assignment_accepts_consistent_multi_department_rows():
-    api = HomeTempusApi(token=TOKEN_A)
-    api.schedules = lambda start, stop: [
-        {"date": start, "child_id": "101", "pickup": {"id": "201"}, "_raw": {"date": start}},
-        {"date": start, "child_id": "101", "pickup": {"id": "201"}, "_raw": {"date": start}},
-    ]
-    assert api.pickup_assignment("2026-08-25", "101")["pickup_id"] == "201"
-
-    api.schedules = lambda start, stop: [
-        {"date": start, "child_id": "101", "pickup": {"id": "201"}, "_raw": {}},
-        {"date": start, "child_id": "101", "pickup": {"id": "202"}, "_raw": {}},
-    ]
-    with pytest.raises(RuntimeError, match="conflicting"):
-        api.pickup_assignment("2026-08-25", "101")
 
 
 class FakeTransport:
@@ -326,3 +312,76 @@ def test_authenticated_requests_serialize_reload_and_rotation(tmp_path):
     assert transport.max_in_flight == 1
     assert transport.tokens == [TOKEN_A, TOKEN_B]
     assert load_token(path) == (TOKEN_C, "persisted")
+
+
+
+
+@pytest.mark.parametrize('status', [200, 204, 401, 302, 500])
+def test_pickup_transport_exact_contract_one_post_and_no_redirect_or_retry(status):
+    data = fixture('pickup_write.json')
+    class Response:
+        status_code = status
+        headers = {'Content-Type': 'application/json'}
+        closed = False
+        def iter_content(self, chunk_size):
+            yield b'{}'
+        def close(self):
+            self.closed = True
+    class Session:
+        headers = {}
+        calls = []
+        def post(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            return response
+    session = Session()
+    session.calls = []
+    response = Response()
+    transport = HomeApiTransport(session=session)
+    if status in (200, 204):
+        transport.post_pickup(data['request']['body'], token=TOKEN_A)
+    else:
+        with pytest.raises(Exception):
+            transport.post_pickup(data['request']['body'], token=TOKEN_A)
+    assert len(session.calls) == 1
+    url, kwargs = session.calls[0]
+    assert url == 'https://homeapi.tempusinfo.se/tempusHomeApi/v1/schedules'
+    assert kwargs['json'] == data['request']['body']
+    assert kwargs['allow_redirects'] is False
+    assert kwargs['stream'] is True
+    assert response.closed
+    # Generic GET does not acquire write access.
+    with pytest.raises(SafetyError):
+        transport._check_request(url)
+
+
+def test_pickup_transport_rejects_retry_enabled_session_before_post():
+    from requests.adapters import HTTPAdapter
+    session = __import__('requests').Session()
+    session.mount('https://', HTTPAdapter(max_retries=3))
+    transport = HomeApiTransport(session=session)
+    with pytest.raises(SafetyError, match='retries'):
+        transport.post_pickup(fixture('pickup_write.json')['request']['body'], token=TOKEN_A)
+
+
+def test_pickup_transport_rejects_extra_dates_and_arbitrary_fields_before_network():
+    from copy import deepcopy
+    class Session:
+        headers = {}
+    transport = HomeApiTransport(session=Session())
+    body = deepcopy(fixture('pickup_write.json')['request']['body'])
+    body[0]['schedules'].append(deepcopy(body[0]['schedules'][0]))
+    with pytest.raises(ValueError):
+        transport.post_pickup(body, token=TOKEN_A)
+    body = deepcopy(fixture('pickup_write.json')['request']['body'])
+    body[0]['schedules'][0]['unverifiedField'] = True
+    with pytest.raises(ValueError):
+        transport.post_pickup(body, token=TOKEN_A)
+
+
+def test_pickup_transport_checks_exact_host_before_post(monkeypatch):
+    from tempus_cli import home_api
+    class Session:
+        headers = {}
+    monkeypatch.setattr(home_api, 'HOME_API_BASE', 'https://example.test/tempusHomeApi/v1')
+    with pytest.raises(SafetyError, match='pickup write URL'):
+        HomeApiTransport(session=Session()).post_pickup(fixture('pickup_write.json')['request']['body'], token=TOKEN_A)

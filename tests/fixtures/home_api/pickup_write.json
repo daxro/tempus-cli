@@ -1,0 +1,15 @@
+{
+  "provenance": "Generated placeholders; request reconstructed from Tempus Hemma 3.43.4 functions 10318, 20161 and callers 28069/28595. This is not a live traffic capture.",
+  "read_before": {
+    "children": [{"childId": 101, "enrollments": [{"enrollmentId": 601, "departmentId": 701, "enrollmentStart": "2025-01-01", "enrollmentStop": "2030-12-31"}]}],
+    "departments": [{"departmentId": 701, "lateScheduleLockedDays": 0}],
+    "calendarEvents": {"calendarEvents": []},
+    "schedules": {"schedules": [{"childId": 101, "schedules": [{"date": "2027-01-05", "scheduleTimes": [{"scheduleTimeId": 401, "enrollmentId": 601, "startTime": 480, "stopTime": 960}], "pickupId": 201, "message": "Generated message", "arrivingAlone": true, "departingAlone": false}]}]}
+  },
+  "contact": {"id": "202", "name": "Generated Proposed Guardian", "phone": "", "children": ["Generated Child"], "_raw": {"pickupId": 202, "childIds": [101]}},
+  "request": {
+    "method": "POST",
+    "path": "/schedules",
+    "body": [{"childId": 101, "schedules": [{"date": "2027-01-05", "scheduleTimes": [{"startTime": 480, "stopTime": 960, "enrollmentId": 601}], "message": "Generated message", "pickupId": 202, "arrivingAlone": true, "departingAlone": false}]}]
+  }
+}

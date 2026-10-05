@@ -3,15 +3,13 @@ import os
 import re
 import sys
 from html import unescape
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urljoin
 
-from .api import TempusApi, new_session
-from .freja import freja_login
+import requests
+from stockholm_freja import freja_login
 from .home_api import HomeApiClient, validate_home_api_login_url
-from .paths import default_config_path, default_session_path
-from .redact import redact_text
-from .session_store import load_session_opt_in
-from .transport import ReadOnlyTempusTransport
+from .paths import default_config_path
+from .transport import LoginTransport
 from stockholm_freja import FrejaInputError, validate_personnummer as validate_freja_personnummer
 
 HTTP_TIMEOUT = 30
@@ -24,10 +22,16 @@ _POST_MESSAGE_PATTERNS = (
 )
 
 
+def new_session():
+    session = requests.Session()
+    session.headers["User-Agent"] = "tempus-cli"
+    return session
+
+
 def _client(session_or_transport):
-    if isinstance(session_or_transport, ReadOnlyTempusTransport):
+    if isinstance(session_or_transport, LoginTransport):
         return session_or_transport
-    return ReadOnlyTempusTransport(session_or_transport)
+    return LoginTransport(session_or_transport)
 
 
 def follow_redirects(session_or_transport, resp, max_hops=20):
@@ -98,17 +102,6 @@ def parse_home_api_auth_token(html):
     return token
 
 
-def stockholm_login_url(schema_id, provider_option="STOCKHOLM_PROD", origin=None):
-    params = {
-        "schemaId": schema_id,
-        "project": "HOME",
-        "force_client": provider_option,
-        "origin": origin or f"https://home.tempusinfo.se/tempusHome/#loc=12&provider={schema_id}",
-        "createLoginCookie": "true",
-    }
-    return "https://login.tempusinfo.se/login/saml/login?" + urlencode(params)
-
-
 def read_config_personnummer(path=None):
     path = path or default_config_path()
     try:
@@ -137,39 +130,6 @@ def resolve_personnummer(personnummer=None, *, allow_prompt=True):
     return validate_personnummer(getpass.getpass("Personal number for Freja (hidden): ").strip())
 
 
-def login(personnummer=None, session=None, quiet=False, freja_timeout=180.0, allow_prompt=True):
-    personnummer = resolve_personnummer(personnummer, allow_prompt=allow_prompt)
-    session = session or new_session()
-    transport = ReadOnlyTempusTransport(session)
-    api = TempusApi(session=session)
-    schemas = api.schemas(12)
-    stockholm = next((s for s in schemas if s["name"] == "Stockholms stad"), None)
-    if not stockholm or not stockholm.get("id"):
-        raise RuntimeError("Could not find Stockholms stad schema")
-    providers = api.identity_providers(stockholm["id"])
-    provider = next((p for p in providers if p.get("name") == "Stockholm-inlogg"), None)
-    if not provider:
-        raise RuntimeError("Could not find Stockholm-inlogg provider")
-
-    login_url = stockholm_login_url(stockholm["id"], provider_option=provider.get("option") or "STOCKHOLM_PROD")
-    resp = transport.get(login_url, allow_redirects=False, timeout=HTTP_TIMEOUT)
-    resp = follow_redirects(transport, resp)
-    html, page_url = handle_saml_chain(transport, resp.text, resp.url)
-    freja_url = urljoin(page_url, find_freja_link(html))
-    freja_page = follow_redirects(transport, transport.get(freja_url, allow_redirects=False, timeout=HTTP_TIMEOUT))
-    freja_login(
-        session,
-        freja_page.url,
-        personnummer,
-        timeout=freja_timeout,
-        on_started=lambda: print("Approve the login in Freja eID+.", file=sys.stderr, flush=True),
-    )
-    resp = follow_redirects(transport, transport.get(freja_page.url, allow_redirects=False, timeout=HTTP_TIMEOUT))
-    handle_saml_chain(transport, resp.text, resp.url)
-    api.authenticate_user_with_cookies()
-    return session
-
-
 def login_home_api(personnummer=None, session=None, quiet=False, freja_timeout=180.0, allow_prompt=True):
     personnummer = resolve_personnummer(personnummer, allow_prompt=allow_prompt)
     session = session or new_session()
@@ -184,7 +144,7 @@ def login_home_api(personnummer=None, session=None, quiet=False, freja_timeout=1
         raise RuntimeError("Could not find Stockholm-inlogg Home API login option")
     login_url = validate_home_api_login_url(option["url"], destination_id=stockholm["id"])
 
-    transport = ReadOnlyTempusTransport(session)
+    transport = LoginTransport(session)
     response = follow_redirects(transport, transport.get(login_url, allow_redirects=False, timeout=HTTP_TIMEOUT))
     html, page_url = handle_saml_chain(transport, response.text, response.url)
     freja_url = urljoin(page_url, find_freja_link(html))
@@ -209,47 +169,3 @@ def login_home_api(personnummer=None, session=None, quiet=False, freja_timeout=1
     client.exchange_saml_token(auth_token)
     client.initialize()
     return client.token
-
-
-def verify_login_return(session):
-    """Verify that the login flow lands back on Tempus Home.
-
-    This only prevents known failed login returns from being reported as a
-    clean login flow.
-    """
-    transport = ReadOnlyTempusTransport(session)
-    resp = follow_redirects(
-        transport,
-        transport.get("https://home.tempusinfo.se/tempusHome/", allow_redirects=False, timeout=HTTP_TIMEOUT),
-    )
-    resp.raise_for_status()
-    if not resp.url.startswith("https://home.tempusinfo.se/tempusHome/"):
-        raise RuntimeError(f"Tempus login return verification failed: unexpected final URL {redact_text(resp.url)}")
-    if "Inloggningen misslyckades" in resp.text or "BankID/federerad inloggning" in resp.text:
-        raise RuntimeError("Tempus login return verification failed: login failure page returned")
-    return True
-
-
-def verify_authenticated(session):
-    """Verify authentication with an allowlisted read-only Tempus RPC."""
-    api = TempusApi(session=session)
-    api.authenticate_user_with_cookies()
-    api.heartbeat()
-    return True
-
-
-def status_text(session_path=None):
-    session_path = session_path or default_session_path()
-    if not session_path.exists():
-        return "session: none\nauthenticated: no"
-
-    session = new_session()
-    if not load_session_opt_in(session, session_path):
-        return "session: unreadable\nauthenticated: no"
-
-    try:
-        verify_authenticated(session)
-    except Exception as exc:
-        reason = redact_text(str(exc))
-        return f"session: persisted\nauthenticated: no\nreason: {reason}"
-    return "session: persisted\nauthenticated: yes"

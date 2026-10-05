@@ -39,6 +39,7 @@ _READ_PATHS = _PUBLIC_PATHS + (
     re.compile(rf"/tempusHomeApi/v1/review/{_DATE}/{_DATE}"),
     re.compile(r"/tempusHomeApi/v1/calendarlink"),
 )
+_PICKUP_WRITE_PATH = "/tempusHomeApi/v1/schedules"
 _ABSENCE_WRITE_PATH = "/tempusHomeApi/v1/absenceReports"
 
 
@@ -109,6 +110,33 @@ class HomeApiTransport:
             )
         except requests.exceptions.RequestException as exc:
             raise wrap_network_error(exc, "Tempus Home API absence POST") from exc
+        return self._read_json_response(response)
+
+    def post_pickup(self, body, *, token):
+        from .pickup_write import validate_body
+        validate_body(body)
+        if not token:
+            raise HomeApiAuthenticationRequired("No Tempus Home API session; run tempus setup")
+        url = HOME_API_BASE + "/schedules"
+        parsed = urlsplit(url)
+        if (parsed.scheme, parsed.hostname, parsed.port, parsed.path, parsed.query, parsed.fragment) != (
+            "https", HOME_API_HOST, None, _PICKUP_WRITE_PATH, "", ""
+        ):
+            raise SafetyError("Blocked non-allowlisted pickup write URL")
+        if isinstance(self.session, requests.Session):
+            retry = self.session.get_adapter(url).max_retries
+            if retry.total not in (0, False):
+                raise SafetyError("Pickup POST requires automatic retries to be disabled")
+        try:
+            response = self.session.post(
+                url, json=body, headers={"Authorization": f"Bearer {token}"},
+                allow_redirects=False, stream=True, timeout=HTTP_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            raise wrap_network_error(exc, "Tempus Home API pickup POST; result uncertain, do not retry") from exc
+        if response.status_code == 204:
+            response.close()
+            return None
         return self._read_json_response(response)
 
     def _read_json_response(self, response):

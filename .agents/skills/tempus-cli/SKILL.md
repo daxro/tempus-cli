@@ -17,7 +17,7 @@ compatibility: Requires the tempus command, network access to the allowlisted Te
 - Freja eID+ login always requires human approval.
 - Home API JWTs currently have a 60-minute lifetime. Supported authenticated reads rotate and save replacement JWTs during active use, but an expired JWT cannot refresh itself. Check `tempus status --json` before live reads; if the session is expired, run setup again and tell the user to approve Freja eID+.
 - For an explicitly requested unattended keep-alive, use the absolute `tempus` executable path in a `*/55 * * * * /absolute/path/to/tempus status --json` cron entry, suppress command output, preserve existing crontab entries, and test the command with cron's minimal environment. Explain that the expression runs at minutes 0 and 55 (a maximum 55-minute gap) and that missed runs while asleep or offline are not replayed.
-- Treat `tempus pickup` as read/preview-only. Home API writes are blocked pending reviewed sanitized fixtures; never use the legacy GWT API as a fallback.
+- `tempus pickup` defaults to read/preview-only. Save only after explicit approval for the specific child, date, and proposed contact, using `--apply --confirm --preview-token TOKEN` from the reviewed preview. Verify with a separate date read. An uncertain save must be reconciled by reads; never delete attempt state to retry blindly. The legacy GWT backend has been removed; contact creation, editing, and removal are unsupported. See `docs/pickup-write-verification.md`.
 - `tempus report-absence` previews a full-day report. Save only when the user explicitly asks for that child and date using `--apply --confirm`, then verify with `tempus absences`.
 - Treat `tempus upcoming-events` as read-only. It does not store snapshots, detect changes, or manage notification state.
 - Treat exit code `2` as invalid or missing input, `1` as an operational failure, and `130` as interruption.
@@ -47,6 +47,7 @@ tempus calendar-link --json --no-input
 tempus pickup --json
 tempus pickup --date YYYY-MM-DD --child CHILD_NAME --json
 tempus pickup --date YYYY-MM-DD --child CHILD_NAME --id PICKUP_ID --json
+tempus pickup --date YYYY-MM-DD --child CHILD_NAME --id PICKUP_ID --apply --confirm --preview-token TOKEN --json --no-input
 tempus setup --personnummer YYYYMMDDNNNN
 TEMPUS_PERSONNUMMER=YYYYMMDDNNNN tempus login --no-input
 ```

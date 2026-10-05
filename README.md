@@ -83,7 +83,9 @@ Human-readable output is the default. Read commands support stable JSON for scri
 
 `login` verifies the Freja login flow without saving a session. `status` verifies the persisted Home API JWT with `/init` without printing account data.
 
-`pickup` lists pickup contacts and previews date assignments. To check who picks up a child on a specific date, use `tempus pickup --date YYYY-MM-DD --child CHILD_NAME --json`. To preview assigning an existing contact, add `--id PICKUP_ID` or `--name "Pickup Person"`. Home API writes remain blocked until reviewed sanitized `POST /schedules` fixtures verify the exact request and response; the CLI never falls back to the legacy web/GWT API.
+`pickup` lists contacts and reads or previews date assignments. Use `tempus pickup --date YYYY-MM-DD --child CHILD_NAME --json --no-input` to read a date, and add `--id PICKUP_ID` or `--name "Pickup Person"` to preview a change. The preview shows the child, date, current contact, proposed contact, and a `preview_token`. To save that reviewed change, repeat the command with `--apply --confirm --preview-token TOKEN`. Changes to the schedule, contact, or editability invalidate the token. The CLI preserves schedule times, enrollments, message, and alone flags, and reads the saved values back before reporting success. Tempus regenerates internal schedule time IDs. An existing assignment can be replaced; an already assigned contact sends no POST.
+
+Pickup attempts are serialized and recorded privately beside the session in `pickup-writes.json`. An uncertain save is never blindly retried, including after restart. Re-run the approved apply to reconcile by reading; a mismatching unresolved attempt blocks further saves. Contact creation, editing, and removal are unsupported, and the legacy web/GWT backend has been removed. See [pickup verification and limitations](docs/pickup-write-verification.md).
 
 `report-absence` previews a full-day absence for one child. Add `--to YYYY-MM-DD` for an inclusive range. Saving requires both `--apply` and `--confirm`; the CLI checks for existing reports and reads the saved report back.
 
@@ -91,23 +93,14 @@ Human-readable output is the default. Read commands support stable JSON for scri
 
 ## Safety
 
-- Remote writes are limited to explicitly confirmed full-day absence reports. Pickup previews do not write.
+- Remote writes are limited to explicitly confirmed date-specific pickup assignments and full-day absence reports. Pickup previews do not write.
 - Home API hosts, paths, query keys, response types, and response sizes are checked centrally. Unknown paths and other writes are blocked.
 - Session files, cookies, SAML values, query values, and token-like values must never be committed or shared.
 - Network access is restricted to HTTPS and an explicit host/path allowlist.
 
 ## Sanitized Pickup Fixtures
 
-Pickup date-assignment payload work must start from a sanitized Home API capture, never raw production traffic. Keep captures and replacement maps outside the repository and replace personal data with generated placeholders before adding a fixture.
-
-```json
-{
-  "Real child name": "Example Child",
-  "Real pickup contact name": "Example Guardian"
-}
-```
-
-Review every fixture before committing. It must contain generated placeholders only: no personal numbers, real names, cookies, JWTs, SAML values, raw production traffic, or unredacted sensitive URLs. A fixture alone does not enable writes; tests must also prove request construction, the separate write allowlist, stale-state checks, and post-write verification.
+The Home API pickup request is derived from the official app's payload construction, with generated placeholder fixtures and recorded [source provenance](docs/pickup-write-verification.md). Keep captures and replacement maps outside the repository. Review fixtures before committing: no personal names, phone numbers, personal numbers, cookies, JWTs, SAML values, or sensitive URLs. Source-derived fixtures and live captures must be clearly distinguished.
 
 ## Agents
 

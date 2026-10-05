@@ -4,11 +4,10 @@ import re
 from pathlib import Path
 
 from .redact import redact_text, redact_url
-from .transport import rpc_method_from_payload
 
 FIXTURE_TYPE = "tempus_pickup_date_assignment_capture"
 FIXTURE_VERSION = 1
-DEFAULT_OUTPUT_DIR = Path("tests/fixtures/pickup_date_assignment")
+DEFAULT_OUTPUT_DIR = Path("tests/fixtures/home_api")
 
 SENSITIVE_HEADER_NAMES = {
     "authorization",
@@ -105,7 +104,6 @@ def _entry_from_har(entry, replacements):
             "url": _sanitize_url(request.get("url", ""), replacements),
             "headers": _sanitize_headers(request.get("headers"), replacements),
             "body": _sanitize_text(post_text, replacements),
-            "gwt_rpc_method": rpc_method_from_payload(post_text),
         },
         "response": {
             "status": response.get("status"),

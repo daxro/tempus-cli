@@ -2,16 +2,11 @@ import json
 
 import pytest
 
-from tempus_cli.gwt import GWT_MODULE_BASE, GWT_SERVICE_URL, HOME_SERVICE
 from tempus_cli.pickup_fixtures import (
     assert_sanitized_fixture,
     main,
     write_sanitized_fixture,
 )
-
-
-def _payload(method):
-    return f"7|0|4|{GWT_MODULE_BASE}|{'A' * 32}|{HOME_SERVICE}|{method}|1|2|3|4|0|"
 
 
 def test_sanitize_pickup_assignment_har_removes_sensitive_values(tmp_path):
@@ -21,22 +16,22 @@ def test_sanitize_pickup_assignment_har_removes_sensitive_values(tmp_path):
                 {
                     "request": {
                         "method": "POST",
-                        "url": GWT_SERVICE_URL + "?SAMLTRANSACTIONID=secret&state=abc&safe=1",
+                        "url": "https://homeapi.tempusinfo.se/tempusHomeApi/v1/schedules" + "?SAMLTRANSACTIONID=secret&state=abc&safe=1",
                         "headers": [
                             {"name": "Cookie", "value": "JSESSIONID=session-secret"},
                             {"name": "Authorization", "value": "Bearer token-secret"},
-                            {"name": "X-GWT-Permutation", "value": "A" * 32},
+                            {"name": "X-Device-Token", "value": "A" * 32},
                         ],
                         "postData": {
-                            "text": _payload("assignPickupForDate")
-                            + "201001010101|Generated Child|Generated Guardian|"
+                            "text": '{"childId": "generated-child-id"}'
+                            + "000000000000|Generated Child|Generated Guardian|"
                             + ("B" * 48)
                         },
                     },
                     "response": {
                         "status": 200,
                         "headers": [{"name": "Set-Cookie", "value": "sid=session-secret"}],
-                        "content": {"text": '//OK[{"child":"Generated Child","name":"Generated Guardian"}]'},
+                        "content": {"text": '[{"child":"Generated Child","name":"Generated Guardian"}]'},
                     },
                 }
             ]
@@ -55,10 +50,9 @@ def test_sanitize_pickup_assignment_har_removes_sensitive_values(tmp_path):
     text = output.read_text()
 
     assert fixture["fixture_type"] == "tempus_pickup_date_assignment_capture"
-    assert fixture["entries"][0]["request"]["gwt_rpc_method"] == "assignPickupForDate"
     assert "Generated Child" not in text
     assert "Generated Guardian" not in text
-    assert "201001010101" not in text
+    assert "000000000000" not in text
     assert "session-secret" not in text
     assert "token-secret" not in text
     assert "secret" not in text
@@ -71,24 +65,7 @@ def test_sanitize_pickup_assignment_har_removes_sensitive_values(tmp_path):
 
 def test_sanitized_fixture_guard_fails_when_sensitive_value_remains():
     with pytest.raises(ValueError, match="sensitive-looking"):
-        assert_sanitized_fixture({"raw": "raw capture still has 201001010101"})
-
-
-def test_fixture_based_contact_write_work_remains_gated():
-    from tempus_cli.api import PICKUP_CONTACT_WRITES_DISABLED, TempusApi
-    from tempus_cli.errors import SafetyError
-    from tempus_cli.transport import ReadOnlyTempusTransport
-
-    class FakeSession:
-        def post(self, *args, **kwargs):
-            raise AssertionError("write request should not be sent")
-
-    with pytest.raises(RuntimeError, match=PICKUP_CONTACT_WRITES_DISABLED):
-        TempusApi().create_pickup("Generated Pickup", "0700000000", ["Generated Child"])
-
-    transport = ReadOnlyTempusTransport(FakeSession())
-    with pytest.raises(SafetyError, match="non-pickup"):
-        transport.post_pickup_write_rpc(GWT_SERVICE_URL, _payload("removePickup"))
+        assert_sanitized_fixture({"raw": "raw capture still has 000000000000"})
 
 
 def test_assert_sanitized_fixture_accepts_generated_placeholders():
@@ -121,7 +98,7 @@ def test_fixture_cli_rejects_repo_input(tmp_path):
 
 def test_fixture_cli_writes_sanitized_output_from_external_sources(tmp_path):
     raw = tmp_path / "capture.har"
-    raw.write_text("Generated Child 201001010101", encoding="utf-8")
+    raw.write_text("Generated Child 000000000000", encoding="utf-8")
     replacements = tmp_path / "replacements.json"
     replacements.write_text('{"Generated Child":"Example Child"}', encoding="utf-8")
     output = tmp_path / "fixture.json"
@@ -130,5 +107,5 @@ def test_fixture_cli_writes_sanitized_output_from_external_sources(tmp_path):
 
     text = output.read_text(encoding="utf-8")
     assert "Generated Child" not in text
-    assert "201001010101" not in text
+    assert "000000000000" not in text
     assert "Example Child" in text

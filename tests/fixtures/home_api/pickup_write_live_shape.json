@@ -1,0 +1,67 @@
+{
+  "provenance": "Generated placeholders for the verified live before/after schedule shape. Request reconstructed from the reviewed pre-save snapshot. HTTP response body was not captured.",
+  "read_before": {
+    "date": "2027-01-05",
+    "scheduleTimes": [
+      {
+        "scheduleTimeId": 401,
+        "enrollmentId": 601,
+        "startTime": 480,
+        "stopTime": 960
+      }
+    ],
+    "pickupId": null,
+    "message": null,
+    "arrivingAlone": false,
+    "departingAlone": false,
+    "childId": 101
+  },
+  "read_after": {
+    "date": "2027-01-05",
+    "scheduleTimes": [
+      {
+        "scheduleTimeId": 402,
+        "enrollmentId": 601,
+        "startTime": 480,
+        "stopTime": 960
+      }
+    ],
+    "pickupId": 202,
+    "message": null,
+    "arrivingAlone": false,
+    "departingAlone": false,
+    "childId": 101
+  },
+  "request": {
+    "method": "POST",
+    "path": "/schedules",
+    "body": [
+      {
+        "childId": 101,
+        "schedules": [
+          {
+            "date": "2027-01-05",
+            "message": null,
+            "arrivingAlone": false,
+            "departingAlone": false,
+            "scheduleTimes": [
+              {
+                "startTime": 480,
+                "stopTime": 960,
+                "enrollmentId": 601
+              }
+            ],
+            "pickupId": 202
+          }
+        ]
+      }
+    ]
+  },
+  "observed_result": {
+    "pickup_saved": true,
+    "server_metadata_regenerated": [
+      "scheduleTimeId"
+    ],
+    "editable_schedule_values_preserved": true
+  }
+}

@@ -2,18 +2,13 @@ import requests
 from urllib.parse import unquote, urlparse
 
 from .errors import SafetyError
-from .gwt import GWT_MODULE_BASE, HOME_SERVICE
 from .net import wrap_network_error
 
 ALLOWED_HOSTS = {
-    "home.tempusinfo.se",
     "login.tempusinfo.se",
     "login001.stockholm.se",
     "login003.stockholm.se",
 }
-ALLOWED_HOME_PREFIXES = (
-    "/tempusHome/",
-)
 ALLOWED_LOGIN_PATH_PREFIXES = (
     "/login/",
 )
@@ -22,36 +17,6 @@ ALLOWED_STOCKHOLM_PATH_PREFIXES = (
     "/siteminderagent/",
     "/NECSadc/",
     "/NECSadcfreja/",
-)
-READ_ONLY_RPC_METHODS = {
-    "authenticateUserWithCookies",
-    "getChildrenAndNotifications",
-    "getSchemas",
-    "getGrandIdIdentityProviders",
-    "getHomeOverviewData",
-    "getPickups",
-    "getWeekSchedules",
-    "heartbeat",
-    "isCreateLoginCookieEnabled",
-    "isUsernamePasswordEnabled",
-}
-PICKUP_WRITE_RPC_METHODS = {
-    "updateSchedule",
-}
-WRITE_WORDS = (
-    "save",
-    "update",
-    "delete",
-    "set",
-    "create",
-    "add",
-    "remove",
-    "confirm",
-    "approve",
-    "submit",
-    "apply",
-    "assign",
-    "write",
 )
 LOGIN_FORM_FIELDS = {
     "SAMLRequest",
@@ -64,28 +29,9 @@ LOGIN_FORM_FIELDS = {
 }
 
 
-def rpc_method_from_payload(payload: str):
-    """Return the GWT RPC method using the observed HomeService wire layout.
-
-    Public Tempus Home RPC payloads are shaped like:
-    7|0|N|moduleBase|permutation|service|method|...
-
-    This intentionally does not scan the whole payload for method-looking strings;
-    scanning can pick a harmless string before a write method.
-    """
-    parts = payload.split("|")
-    if len(parts) < 8:
-        return None
-    if parts[0] != "7" or parts[1] != "0":
-        return None
-    if parts[3] != GWT_MODULE_BASE:
-        return None
-    if parts[5] != HOME_SERVICE:
-        return None
-    return parts[6] or None
 
 
-class ReadOnlyTempusTransport:
+class LoginTransport:
     def __init__(self, session):
         self.session = session
 
@@ -95,24 +41,6 @@ class ReadOnlyTempusTransport:
             return self.session.get(url, **kwargs)
         except requests.exceptions.RequestException as exc:
             raise wrap_network_error(exc, "Tempus GET") from exc
-
-    def post_rpc(self, url, payload, headers=None, **kwargs):
-        self._check_url("POST", url)
-        method = rpc_method_from_payload(payload)
-        self._check_rpc_method(method)
-        try:
-            return self.session.post(url, data=payload, headers=headers, **kwargs)
-        except requests.exceptions.RequestException as exc:
-            raise wrap_network_error(exc, f"Tempus RPC {method}") from exc
-
-    def post_pickup_write_rpc(self, url, payload, headers=None, **kwargs):
-        self._check_url("POST", url)
-        method = rpc_method_from_payload(payload)
-        self._check_pickup_write_rpc_method(method)
-        try:
-            return self.session.post(url, data=payload, headers=headers, **kwargs)
-        except requests.exceptions.RequestException as exc:
-            raise wrap_network_error(exc, f"Tempus pickup RPC {method}") from exc
 
     def post_login_form(self, url, data=None, **kwargs):
         self._check_url("POST", url, allow_login=True)
@@ -133,15 +61,11 @@ class ReadOnlyTempusTransport:
         decoded_path = unquote(parsed.path)
         if ".." in decoded_path.split("/"):
             raise SafetyError(f"Blocked path traversal: {parsed.path}")
-        if parsed.hostname == "home.tempusinfo.se" and not parsed.path.startswith(ALLOWED_HOME_PREFIXES):
-            raise SafetyError(f"Blocked Tempus path: {parsed.path}")
         if parsed.hostname == "login.tempusinfo.se" and not parsed.path.startswith(ALLOWED_LOGIN_PATH_PREFIXES):
             raise SafetyError(f"Blocked login path: {parsed.path}")
         if parsed.hostname in {"login001.stockholm.se", "login003.stockholm.se"} and not parsed.path.startswith(ALLOWED_STOCKHOLM_PATH_PREFIXES):
             raise SafetyError(f"Blocked Stockholm login path: {parsed.path}")
-        if method == "POST" and parsed.hostname == "home.tempusinfo.se" and parsed.path != "/tempusHome/tempusHome/service":
-            raise SafetyError("Only GWT RPC POSTs are allowed on Tempus Home")
-        if method == "POST" and parsed.hostname != "home.tempusinfo.se" and not allow_login:
+        if method == "POST" and not allow_login:
             raise SafetyError("Form POSTs are only allowed inside login flow")
 
     def _check_login_form_data(self, data):
@@ -153,19 +77,3 @@ class ReadOnlyTempusTransport:
         unknown = keys - LOGIN_FORM_FIELDS
         if unknown:
             raise SafetyError(f"Blocked unexpected login form fields: {', '.join(sorted(unknown))}")
-
-    def _check_rpc_method(self, method):
-        if not method:
-            raise SafetyError("Could not identify GWT RPC method")
-        if method in READ_ONLY_RPC_METHODS:
-            return
-        lower = method.lower()
-        if any(word in lower for word in WRITE_WORDS):
-            raise SafetyError(f"Blocked write-like Tempus RPC method: {method}")
-        raise SafetyError(f"Blocked unknown Tempus RPC method: {method}")
-
-    def _check_pickup_write_rpc_method(self, method):
-        if not method:
-            raise SafetyError("Could not identify GWT RPC method")
-        if method not in PICKUP_WRITE_RPC_METHODS:
-            raise SafetyError(f"Blocked non-pickup Tempus write RPC method: {method}")
